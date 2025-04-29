@@ -58,16 +58,16 @@ int main()
     con.BeginTransaction();
     // Query to analyze
 
-    // std::string query = "SELECT name FROM Student WHERE year > 2019";
+    // std::string query = "SELECT s.name as dq FROM Student as s WHERE year > 2019";
     // std::string query = "SELECT COUNT(name) FROM Student;";
-    // std::string query = "SELECT name FROM Student WHERE year >= 2019 AND gender != 'Male';";
-    // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
-    std::string query = "SELECT max(id),max(year),count(name),min(id) FROM Student;";
+    // std::string query = "SELECT name as kmkopkop FROM Student WHERE year >= 2019 AND gender != 'Male';";
+    std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
+    // std::string query = "SELECT max(id),max(year),count(name),min(id) FROM Student;";
     profiler.start("Get Logical Plan");
     auto logical_plan = duckdb_interface.getLogicalPlan(query);
     profiler.stop("Get Logical Plan");
-    std::cout << "Logical plan:\n"
-              << logical_plan->ToString() << std::endl;
+    // std::cout << "Logical plan:\n"
+            //   << logical_plan->ToString() << std::endl;
 
     profiler.start("Get Physical Plan");
     duckdb::PhysicalPlanGenerator physical_plan_generator(*con.context);
@@ -82,7 +82,7 @@ int main()
     // PhysicalOpNode root_node;
     TableResults *input_table = nullptr;
     auto plan_tree = PhysicalOpNode::buildPlanTree(&(physical_plan.get()->Root()), &data_base, &input_table);
-    printPhysicalPlan(&(physical_plan.get()->Root()));
+    // printPhysicalPlan(&(physical_plan.get()->Root()));
 
     // TableResults r = csv_importer.read_table(&data_base, "Student", {"name", "year"});
     // r.print();

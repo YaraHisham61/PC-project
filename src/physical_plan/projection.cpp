@@ -1,115 +1,121 @@
-// #include "physical_plan/projection.hpp"
+#include "physical_plan/projection.hpp"
 
-// Projection::Projection(const duckdb::InsertionOrderPreservingMap<std::string> &params) : PhysicalOpNode()
-// {
-//     // Initialize the projection based on the provided parameters
-//     auto it = params.find("__projections__");
-//     if (it != params.end())
-//     {
-//         parseProjectionList(it->second);
-//     }
-// }
+Projection::Projection(const duckdb::InsertionOrderPreservingMap<std::string> &params) : PhysicalOpNode()
+{
+    auto it = params.find("__projections__");
+    if (it != params.end())
+    {
+        parseProjectionList(it->second);
+    }
+}
 
-// void Projection::parseProjectionList(const std::string &projection_list)
-// {
-//     std::istringstream iss(projection_list);
-//     std::string line;
+void Projection::parseProjectionList(const std::string &projection_list)
+{
+    std::istringstream iss(projection_list);
+    std::string line;
 
-//     flag = projection_list.find('#') != std::string::npos;
+    flag = projection_list.find('#') != std::string::npos;
 
-//     while (std::getline(iss, line))
-//     {
-//         line.erase(0, line.find_first_not_of(" \t\n\r"));
-//         line.erase(line.find_last_not_of(" \t\n\r") + 1);
+    while (std::getline(iss, line))
+    {
+        line.erase(0, line.find_first_not_of(" \t\n\r"));
+        line.erase(line.find_last_not_of(" \t\n\r") + 1);
 
-//         if (line.empty())
-//             continue;
-//         if (flag)
-//         {
-//             projections_index.push_back(line[1] - '0');
-//         }
-//         else
-//         {
-//             output_names.push_back(line);
-//         }
-//     }
-// }
+        if (line.empty())
+            continue;
+        if (flag)
+        {
+            projections_index.push_back(line[1] - '0');
+        }
+        else
+        {
+            output_names.push_back(line);
+        }
+    }
+}
 
-// TableResults Projection::applyProjection(const TableResults &input_table) const
-// {
-//     TableResults result;
+TableResults Projection::applyProjection(const TableResults &input_table) const
+{
+    TableResults result;
 
-//     // Handle empty input
-//     if (input_table.rows.empty() || input_table.columns.empty())
-//     {
-//         return result;
-//     }
+    if (input_table.column_count == 0 || input_table.row_count == 0)
+    {
+        return result;
+    }
 
-//     // Get the number of columns and rows from input
-//     size_t num_input_cols = input_table.columns.size();
-//     size_t num_rows = input_table.row_count;
+    if (flag)
+    {
+        for (int index : projections_index)
+        {
+            if (index < 0 || index >= static_cast<int>(input_table.column_count))
+            {
+                throw std::runtime_error("Projection index out of bounds");
+            }
+            result.columns.push_back(input_table.columns[index]);
+        }
 
-//     // Case 1: Index-based projection (like "#1\n#2")
-//     if (flag)
-//     {
-//         // Set up the result columns
-//         for (int index : projections_index)
-//         {
-//             // Validate index
-//             if (index < 0 || index >= static_cast<int>(num_input_cols))
-//             {
-//                 throw std::runtime_error("Projection index out of bounds");
-//             }
-//             result.columns.push_back(input_table.columns[index]);
-//         }
+        result.column_count = projections_index.size();
+        result.row_count = input_table.row_count;
+        result.data.resize(result.column_count);
 
-//         // Copy the data for selected columns
-//         for (size_t row = 0; row < num_rows; ++row)
-//         {
-//             for (int col_index : projections_index)
-//             {
-//                 size_t flat_index = row * num_input_cols + col_index;
-//                 if (flat_index < input_table.rows.size())
-//                 {
-//                     result.rows.push_back(input_table.rows[flat_index]);
-//                 }
-//             }
-//         }
+        for (size_t col_idx = 0; col_idx < result.columns.size(); ++col_idx)
+        {
+            const ColumnInfo &col_info = result.columns[col_idx];
+            int input_col_idx = projections_index[col_idx];
 
-//         result.row_count = num_rows;
-//         result.column_count = projections_index.size();
-//     }
-//     // Case 2: Column renaming only (like "id\nname_upper")
-//     else
-//     {
-//         // Copy all data from input
-//         result = input_table;
-//     }
+            switch (col_info.type)
+            {
+            case DataType::FLOAT:
+                result.data[col_idx] = static_cast<float *>(malloc(result.row_count * sizeof(float)));
+                memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(float));
+                break;
+            case DataType::INT:
+                result.data[col_idx] = static_cast<int *>(malloc(result.row_count * sizeof(int)));
+                memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(int));
+                break;
+            case DataType::DATETIME:
+                result.data[col_idx] = static_cast<int64_t *>(malloc(result.row_count * sizeof(int64_t)));
+                memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(int64_t));
+                break;
+            case DataType::STRING:
+                result.data[col_idx] = static_cast<char **>(malloc(result.row_count * sizeof(char *)));
+                for (size_t row = 0; row < result.row_count; ++row)
+                {
+                    char *original_str = static_cast<char **>(input_table.data[input_col_idx])[row];
+                    static_cast<char **>(result.data[col_idx])[row] = strdup(original_str);
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    else
+    {
+        result = input_table;
+    }
 
-//     // Update column names with output_names if provided
-//     if (!output_names.empty())
-//     {
-//         // Validate output names count matches result columns count
-//         if (output_names.size() != result.columns.size())
-//         {
-//             throw std::runtime_error("Output names count doesn't match projection result columns count");
-//         }
+    if (!output_names.empty())
+    {
+        if (output_names.size() != result.columns.size())
+        {
+            throw std::runtime_error("Output names count doesn't match projection result columns count");
+        }
 
-//         // Apply new names
-//         for (size_t i = 0; i < result.columns.size(); ++i)
-//         {
-//             result.columns[i].name = output_names[i];
-//         }
-//     }
+        for (size_t i = 0; i < result.columns.size(); ++i)
+        {
+            result.columns[i].name = output_names[i];
+        }
+    }
 
-//     return result;
-// }
-// void Projection::print() const
-// {
-//     std::cout << "Projection: ";
-//     for (const auto &name : output_names)
-//     {
-//         std::cout << name << " ";
-//     }
-//     std::cout << "\n";
-// }
+    return result;
+}
+void Projection::print() const
+{
+    std::cout << "Projection: ";
+    for (const auto &name : output_names)
+    {
+        std::cout << name << " ";
+    }
+    std::cout << "\n";
+}

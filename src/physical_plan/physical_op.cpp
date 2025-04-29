@@ -1,6 +1,6 @@
 #include "physical_plan/physical_op.hpp"
 #include "physical_plan/seq_scan.hpp"
-// #include "physical_plan/projection.hpp"
+#include "physical_plan/projection.hpp"
 // #include "physical_plan/filter.hpp"
 // #include "physical_plan/aggregate.hpp"
 std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
@@ -21,7 +21,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     // First create the current node
     if (op_name == "SEQ_SCAN")
     {
-        node = std::make_unique<SeqScan>(params);        
+        node = std::make_unique<SeqScan>(params);
     }
     else if (op_name == "FILTER")
     {
@@ -29,7 +29,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     }
     else if (op_name == "PROJECTION")
     {
-        // node = std::make_unique<Projection>(params);
+        node = std::make_unique<Projection>(params);
     }
     else if (op_name == "UNGROUPED_AGGREGATE")
     {
@@ -39,7 +39,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     for (auto &child : op->children)
     {
         auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr);
-        if (child_node)
+        if (child_node && !child_node->params.empty())
         {
             node->children.push_back(std::move(child_node));
         }
@@ -50,7 +50,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     {
         auto *seq_ptr = static_cast<SeqScan *>(node.get());
         TableResults scan_result = seq_ptr->read_scan_table(data_base);
-        scan_result.print();
+        // scan_result.print();
         if (*input_table_ptr)
         {
             **input_table_ptr = std::move(scan_result);
@@ -82,10 +82,10 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
             return nullptr;
         }
 
-        // auto *proj_ptr = static_cast<Projection *>(node.get());
-        // TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
-        // projected_result.print();
-        // **input_table_ptr = std::move(projected_result);
+        auto *proj_ptr = static_cast<Projection *>(node.get());
+        TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
+        projected_result.print();
+        **input_table_ptr = std::move(projected_result);
     }
     else if (op_name == "UNGROUPED_AGGREGATE")
     {

@@ -6,3 +6,5 @@ build/
 *.ptx
 *.cubin
 *.fatbin
+.vscode/
+.idea/

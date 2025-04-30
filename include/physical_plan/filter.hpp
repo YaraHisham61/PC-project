@@ -1,6 +1,8 @@
 #pragma once
 
 #include "physical_plan/physical_op.hpp"
+#include "kernels/filter_kernel.hpp"
+#include <cuda_runtime.h>
 #include <regex>
 #include <cctype>
 struct Condition {
@@ -23,6 +25,6 @@ public:
     void parseSimpleCondition(const std::string& expr);
     void parseComplexCondition(const std::string& expr);
     Condition parseSingleCondition(const std::string& cond_expr) const;
-    bool evaluateRow(const TableResults& table, size_t row_idx, size_t num_cols) const;
-    bool evaluateCondition(const TableResults& table, size_t row_idx, size_t num_cols, const Condition& cond) const;
+    // bool evaluateRow(const TableResults& table, size_t row_idx, size_t num_cols) const;
+    // bool evaluateCondition(const TableResults& table, size_t row_idx, size_t num_cols, const Condition& cond) const;
 };

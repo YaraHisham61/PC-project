@@ -47,9 +47,19 @@ public:
     size_t row_count = 0;
     size_t column_count = 0;
 
+    size_t getColumnIndex(const std::string &column_name) const
+    {
+        for (size_t i = 0; i < columns.size(); ++i)
+        {
+            if (columns[i].name == column_name)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
     void print()
     {
-        // Print column headers
         for (const auto &col : columns)
         {
             std::cout << col.name << "\t";

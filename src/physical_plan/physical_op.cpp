@@ -1,7 +1,7 @@
 #include "physical_plan/physical_op.hpp"
 #include "physical_plan/seq_scan.hpp"
 #include "physical_plan/projection.hpp"
-// #include "physical_plan/filter.hpp"
+#include "physical_plan/filter.hpp"
 // #include "physical_plan/aggregate.hpp"
 std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
@@ -25,7 +25,8 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     }
     else if (op_name == "FILTER")
     {
-        // node = std::make_unique<Filter>(params);
+        node = std::make_unique<Filter>(params);
+        
     }
     else if (op_name == "PROJECTION")
     {

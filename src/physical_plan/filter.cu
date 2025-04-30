@@ -206,13 +206,18 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
             std::cerr << "Unsupported operator: " << cond.op << "\n";
         }
         int numThreads = 1024;
-        int value = 2019;
+        float value = 2019;
         int numBlocks = (input_table.row_count + numThreads - 1) / numThreads;
         filterKernel<<<numBlocks, numThreads>>>(d_col_in, d_col_out_bool, input_table.row_count, value, cond_int);
         cudaDeviceSynchronize();
 
         bool *h_col_out_bool;
+        h_col_out_bool = (bool *)malloc(input_table.row_count * sizeof(bool));
         cudaMemcpy(h_col_out_bool, d_col_out_bool, input_table.row_count * sizeof(bool), cudaMemcpyDeviceToHost);
+        for (int i = 0; i < input_table.row_count; ++i)
+        {
+            std::cout << h_col_out_bool[i] << " ";
+        }
     }
 
     // {

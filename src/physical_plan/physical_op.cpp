@@ -70,8 +70,8 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
             return nullptr;
         }
 
-        // auto *filter_ptr = static_cast<Filter *>(node.get());
-        // TableResults filtered_result = filter_ptr->applyFilter(**input_table_ptr);
+        auto *filter_ptr = static_cast<Filter *>(node.get());
+        TableResults filtered_result = filter_ptr->applyFilter(**input_table_ptr);
         // filtered_result.print();
         // **input_table_ptr = std::move(filtered_result);
     }

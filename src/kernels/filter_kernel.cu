@@ -1,44 +1,39 @@
-// cuda_filters.cu
 #include "kernels/filter_kernel.hpp"
 
-template <typename T>
-__global__ void filterKernel(
-    T *data_in,
-    bool *output_mask,
-    size_t row_count,
-    int threshold,
-    uint8_t cond // 1: >, 2: <, 3: ==, 4: !=, 5: >=, 6: <=
-)
-
+// template <typename T>
+__global__ void filterKernel(void *input, bool *output, size_t row_count, float value, uint8_t cond)
 {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= row_count)
+        return;
 
-    if (idx < row_count)
+    // T *typed_input = static_cast<T *>(input);
+    // T val = typed_input[idx];
+    float *typed_input = static_cast<float *>(input);
+    float val = typed_input[idx];
+
+    switch (cond)
     {
-        bool result = false;
-        switch (cond)
-        {
-        case 1:
-            result = data_in[idx] > threshold;
-            break;
-        case 2:
-            result = data_in[idx] < threshold;
-            break;
-        case 3: 
-            result = data_in[idx] == threshold;
-            break;
-        case 4:
-            result = data_in[idx] != threshold;
-            break;
-        case 5:
-            result = data_in[idx] >= threshold;
-            break;
-        case 6:
-            result = data_in[idx] <= threshold;
-            break;
-        default:
-            break;
-        }
-        output_mask[idx] = result;
+    case 1: // >
+        output[idx] = (val > value);
+        break;
+    case 2: // <
+        output[idx] = (val < value);
+        break;
+    case 3: // ==
+        output[idx] = (val == value);
+        break;
+    case 4: // !=
+        output[idx] = (val != value);
+        break;
+    case 5: // <=
+        output[idx] = (val <= value);
+        break;
+    case 6: // >=
+        output[idx] = (val >= value);
+        break;
+    default:
+        output[idx] = false;
+        break;
     }
 }

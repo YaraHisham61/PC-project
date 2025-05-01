@@ -87,6 +87,7 @@
         "__locale": "cpp",
         "__node_handle": "cpp",
         "__functional_base": "cpp",
-        "locale": "cpp"
+        "locale": "cpp",
+        "__memory": "cpp"
     }
 }

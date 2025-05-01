@@ -98,7 +98,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *aggr_ptr = static_cast<Aggregate *>(node.get());
         TableResults aggregate_result = aggr_ptr->computeAggregates(**input_table_ptr);
-        // aggregate_result.print();
+        aggregate_result.print();
         **input_table_ptr = std::move(aggregate_result);
     }
 

@@ -326,8 +326,8 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
             float *d_input, *d_output;
             cudaMalloc(&d_input, row_count * sizeof(float));
             cudaMalloc(&d_output, selected_count * sizeof(float));
+            
             float *h_output_data = static_cast<float *>(malloc(selected_count * sizeof(float)));
-
             cudaMemcpy(d_input, h_input_data, row_count * sizeof(float), cudaMemcpyHostToDevice);
             copySelectedRowsKernel<float><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
             cudaDeviceSynchronize();

@@ -1,4 +1,4 @@
-#include "kernels/aggregate_kernel.hpp"
+#include "kernels/aggregate/max_kernel.hpp"
 
 template <typename T>
 __device__ T atomicMaxGeneric(T *address, T val)
@@ -203,7 +203,6 @@ __global__ void findMaxElement<char *>(char **input, char **output, int size)
             atomicMaxString(output, local_max, input);
         }
     }
-
 }
 // Explicit instantiations
 template __device__ int atomicMaxGeneric<int>(int *, int);

@@ -72,8 +72,8 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *filter_ptr = static_cast<Filter *>(node.get());
         TableResults filtered_result = filter_ptr->applyFilter(**input_table_ptr);
-        // filtered_result.print();
-        // **input_table_ptr = std::move(filtered_result);
+        filtered_result.print();
+        **input_table_ptr = std::move(filtered_result);
     }
     else if (op_name == "PROJECTION")
     {
@@ -85,7 +85,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *proj_ptr = static_cast<Projection *>(node.get());
         TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
-        projected_result.print();
+        // projected_result.print();
         **input_table_ptr = std::move(projected_result);
     }
     else if (op_name == "UNGROUPED_AGGREGATE")

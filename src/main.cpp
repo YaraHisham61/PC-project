@@ -60,14 +60,14 @@ int main()
 
     // std::string query = "SELECT s.name as dq FROM Student as s WHERE year > 2019";
     // std::string query = "SELECT COUNT(name) FROM Student;";
-    std::string query = "SELECT year FROM Student WHERE year >= 2019;";
+    std::string query = "SELECT * FROM Student WHERE year >2019 or id = 500; ";
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT max(id),max(year),count(name),min(id) FROM Student;";
     profiler.start("Get Logical Plan");
     auto logical_plan = duckdb_interface.getLogicalPlan(query);
     profiler.stop("Get Logical Plan");
     // std::cout << "Logical plan:\n"
-            //   << logical_plan->ToString() << std::endl;
+    //   << logical_plan->ToString() << std::endl;
 
     profiler.start("Get Physical Plan");
     duckdb::PhysicalPlanGenerator physical_plan_generator(*con.context);

@@ -8,12 +8,6 @@ Filter::Filter(const duckdb::InsertionOrderPreservingMap<std::string> &params)
     {
         parseConditions(it->second);
     }
-    std::cout << "Filter: " << conditions.size() << " conditions\n";
-    std::cout << "Logical ops: ";
-    for (const auto &op : logical_ops)
-    {
-        std::cout << op << " ";
-    }
 }
 
 std::string Filter::trim(const std::string &str) const
@@ -131,219 +125,264 @@ Condition Filter::parseSingleCondition(const std::string &cond_expr) const
     }
     return cond;
 }
-
-TableResults Filter::applyFilter(const TableResults &input_table) const
+bool *Filter::getSelectedRows(const TableResults &input_table) const
 {
-    TableResults filtered_table;
-    filtered_table.columns = input_table.columns;
-    filtered_table.column_count = input_table.column_count;
+    const size_t row_count = input_table.row_count;
+    bool *h_final_mask = new bool[row_count]();
 
-    size_t num_cols = input_table.column_count;
+    bool *d_combined_mask = nullptr;
+    cudaMalloc(&d_combined_mask, row_count * sizeof(bool));
+    cudaMemset(d_combined_mask, 0, row_count * sizeof(bool));
 
-    for (const auto &cond : this->conditions)
+    int numThreads = 256;
+    int numBlocks = (row_count + numThreads - 1) / numThreads;
+
+    for (size_t cond_idx = 0; cond_idx < this->conditions.size(); cond_idx++)
     {
+        const auto &cond = this->conditions[cond_idx];
+        const size_t col_idx = input_table.getColumnIndex(cond.column);
+        const DataType col_type = input_table.columns[col_idx].type;
 
-        ColumnInfo col;
-        col.name = cond.column;
-        col.idx = input_table.getColumnIndex(cond.column);
-        col.type = input_table.columns[col.idx].type;
-        void *d_col_in;
-        bool *d_col_out_bool;
-        cudaMalloc(&d_col_out_bool, input_table.row_count * sizeof(bool *));
-
-        if (col.type == DataType::INT)
-        {
-            d_col_in = static_cast<int *>(d_col_in);
-            cudaMalloc(&d_col_in, input_table.row_count * sizeof(int));
-            cudaMemcpy(d_col_in, input_table.data[col.idx], input_table.row_count * sizeof(int), cudaMemcpyHostToDevice);
-        }
-        else if (col.type == DataType::FLOAT)
-        {
-            d_col_in = static_cast<float *>(d_col_in);
-            cudaMalloc(&d_col_in, input_table.row_count * sizeof(float));
-            cudaMemcpy(d_col_in, input_table.data[col.idx], input_table.row_count * sizeof(float), cudaMemcpyHostToDevice);
-        }
-        else if (col.type == DataType::DATETIME)
-        {
-            d_col_in = static_cast<int64_t *>(d_col_in);
-            cudaMalloc(&d_col_in, input_table.row_count * sizeof(int64_t));
-            cudaMemcpy(d_col_in, input_table.data[col.idx], input_table.row_count * sizeof(int64_t), cudaMemcpyHostToDevice);
-        }
-        else if (col.type == DataType::STRING)
-        {
-            d_col_in = static_cast<char **>(d_col_in);
-            cudaMalloc(&d_col_in, input_table.row_count * sizeof(char *));
-            cudaMemcpy(d_col_in, input_table.data[col.idx], input_table.row_count * sizeof(char *), cudaMemcpyHostToDevice);
-        }
-
-        uint8_t cond_int = 0;
+        uint8_t cond_code = 0;
         if (cond.op == ">")
-        {
-            cond_int = 1;
-        }
+            cond_code = 1;
         else if (cond.op == "<")
-        {
-            cond_int = 2;
-        }
-        else if (cond.op == "==")
-        {
-            cond_int = 3;
-        }
+            cond_code = 2;
+        else if (cond.op == "=")
+            cond_code = 3;
         else if (cond.op == "!=")
-        {
-            cond_int = 4;
-        }
+            cond_code = 4;
         else if (cond.op == "<=")
-        {
-            cond_int = 5;
-        }
+            cond_code = 5;
         else if (cond.op == ">=")
-        {
-            cond_int = 6;
-        }
+            cond_code = 6;
         else
         {
             std::cerr << "Unsupported operator: " << cond.op << "\n";
+            continue;
         }
-        int numThreads = 1024;
-        float value = 2019;
-        int numBlocks = (input_table.row_count + numThreads - 1) / numThreads;
-        filterKernel<<<numBlocks, numThreads>>>(d_col_in, d_col_out_bool, input_table.row_count, value, cond_int);
-        cudaDeviceSynchronize();
 
-        bool *h_col_out_bool;
-        h_col_out_bool = (bool *)malloc(input_table.row_count * sizeof(bool));
-        cudaMemcpy(h_col_out_bool, d_col_out_bool, input_table.row_count * sizeof(bool), cudaMemcpyDeviceToHost);
-        for (int i = 0; i < input_table.row_count; ++i)
+        bool *d_temp_mask = nullptr;
+        cudaMalloc(&d_temp_mask, row_count * sizeof(bool));
+        cudaMemset(d_temp_mask, 0, row_count * sizeof(bool));
+
+        if (col_type == DataType::INT)
         {
-            std::cout << h_col_out_bool[i] << " ";
+            int *d_col_data = nullptr;
+            cudaMalloc(&d_col_data, row_count * sizeof(int));
+            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(int), cudaMemcpyHostToDevice);
+            int value = std::stoi(cond.value);
+            filterKernel<int><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
+            cudaFree(d_col_data);
+        }
+        else if (col_type == DataType::FLOAT)
+        {
+            float *d_col_data = nullptr;
+            cudaMalloc(&d_col_data, row_count * sizeof(float));
+            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(float), cudaMemcpyHostToDevice);
+            float value = std::stof(cond.value);
+            filterKernel<float><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
+            cudaFree(d_col_data);
+        }
+        else if (col_type == DataType::DATETIME)
+        {
+            int64_t *d_col_data = nullptr;
+            cudaMalloc(&d_col_data, row_count * sizeof(int64_t));
+            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(int64_t), cudaMemcpyHostToDevice);
+            int64_t value = std::stoll(cond.value);
+            filterKernel<int64_t><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
+            cudaFree(d_col_data);
+        }
+        else if (col_type == DataType::STRING)
+        {
+            const char **d_col_data = nullptr;
+            cudaMalloc(&d_col_data, row_count * sizeof(char *));
+            const char **host_strings = static_cast<const char **>(input_table.data[col_idx]);
+
+            char **d_strings = new char *[row_count];
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                size_t len = strlen(host_strings[i]) + 1;
+                cudaMalloc(&d_strings[i], len);
+                cudaMemcpy(d_strings[i], host_strings[i], len, cudaMemcpyHostToDevice);
+                cudaMemcpy(&d_col_data[i], &d_strings[i], sizeof(char *), cudaMemcpyHostToDevice);
+            }
+
+            char *d_value = nullptr;
+            cudaMalloc(&d_value, cond.value.size() + 1);
+            cudaMemcpy(d_value, cond.value.c_str(), cond.value.size() + 1, cudaMemcpyHostToDevice);
+            filterKernelString<<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, d_value, cond_code);
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                cudaFree(d_strings[i]);
+            }
+            delete[] d_strings;
+            cudaFree(d_value);
+            cudaFree(d_col_data);
+        }
+
+        if (cond_idx == 0)
+        {
+            cudaMemcpy(d_combined_mask, d_temp_mask, row_count * sizeof(bool), cudaMemcpyDeviceToDevice);
+        }
+        else
+        {
+            const std::string &op = logical_ops[cond_idx - 1];
+            if (op == "AND")
+            {
+                andKernel<<<numBlocks, numThreads>>>(d_combined_mask, d_temp_mask, row_count);
+            }
+            else if (op == "OR")
+            {
+                orKernel<<<numBlocks, numThreads>>>(d_combined_mask, d_temp_mask, row_count);
+            }
+        }
+        bool *h_temp_mask = new bool[row_count];
+        cudaMemcpy(h_temp_mask, d_temp_mask, row_count * sizeof(bool), cudaMemcpyDeviceToHost);
+        // for (size_t i = 0; i < row_count; i++)
+        // {
+        //     if (h_temp_mask[i])
+        //     {
+        //         std::cout << "Row " << i << " matches condition " << cond_idx << "\n";
+        //     }
+        // }
+        cudaFree(d_temp_mask);
+        cudaDeviceSynchronize();
+    }
+
+    cudaMemcpy(h_final_mask, d_combined_mask, row_count * sizeof(bool), cudaMemcpyDeviceToHost);
+    cudaFree(d_combined_mask);
+
+    size_t filtered_row_count = 0;
+    for (size_t i = 0; i < row_count; i++)
+    {
+        if (h_final_mask[i])
+            filtered_row_count++;
+    }
+
+    std::cout << "Total rows matched: " << filtered_row_count << "\n";
+    return h_final_mask;
+}
+
+TableResults Filter::applyFilter(const TableResults &input_table) const
+{
+    bool *h_selected_rows = getSelectedRows(input_table);
+
+    size_t selected_count = 0;
+    const size_t row_count = input_table.row_count;
+    for (size_t i = 0; i < row_count; i++)
+    {
+        if (h_selected_rows[i])
+            selected_count++;
+    }
+    std::cout << "DEBUG: Calculated selected_count = " << selected_count << std::endl;
+
+    TableResults filtered_table;
+    filtered_table.column_count = input_table.column_count;
+    filtered_table.columns = input_table.columns;
+    filtered_table.row_count = selected_count;
+    filtered_table.data.resize(input_table.column_count);
+
+    bool *d_mask;
+    cudaMalloc(&d_mask, row_count * sizeof(bool));
+    cudaMemcpy(d_mask, h_selected_rows, row_count * sizeof(bool), cudaMemcpyHostToDevice);
+
+    unsigned int *d_positions;
+    cudaMalloc(&d_positions, row_count * sizeof(unsigned int));
+
+    int threads = 256;
+    int blocks = (row_count + threads - 1) / threads;
+    size_t shared_mem = threads * sizeof(unsigned int);
+
+    computeOutputPositions<<<blocks, threads, shared_mem>>>(d_mask, d_positions, row_count);
+    cudaDeviceSynchronize();
+
+    for (size_t col_idx = 0; col_idx < input_table.column_count; col_idx++)
+    {
+        const DataType col_type = input_table.columns[col_idx].type;
+
+        if (col_type == DataType::INT)
+        {
+            int *h_input_data = static_cast<int *>(input_table.data[col_idx]);
+            int *d_input, *d_output;
+            cudaMalloc(&d_input, row_count * sizeof(int));
+            cudaMalloc(&d_output, selected_count * sizeof(int));
+            int *h_output_data = static_cast<int *>(malloc(selected_count * sizeof(int)));
+
+            cudaMemcpy(d_input, h_input_data, row_count * sizeof(int), cudaMemcpyHostToDevice);
+            copySelectedRowsKernel<int><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
+            cudaDeviceSynchronize();
+            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(int), cudaMemcpyDeviceToHost);
+
+            filtered_table.data[col_idx] = h_output_data;
+            cudaFree(d_input);
+            cudaFree(d_output);
+        }
+        else if (col_type == DataType::FLOAT)
+        {
+            float *h_input_data = static_cast<float *>(input_table.data[col_idx]);
+            float *d_input, *d_output;
+            cudaMalloc(&d_input, row_count * sizeof(float));
+            cudaMalloc(&d_output, selected_count * sizeof(float));
+            float *h_output_data = static_cast<float *>(malloc(selected_count * sizeof(float)));
+
+            cudaMemcpy(d_input, h_input_data, row_count * sizeof(float), cudaMemcpyHostToDevice);
+            copySelectedRowsKernel<float><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
+            cudaDeviceSynchronize();
+            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(float), cudaMemcpyDeviceToHost);
+
+            filtered_table.data[col_idx] = h_output_data;
+            cudaFree(d_input);
+            cudaFree(d_output);
+        }
+        else if (col_type == DataType::DATETIME)
+        {
+            int64_t *h_input_data = static_cast<int64_t *>(input_table.data[col_idx]);
+            int64_t *d_input, *d_output;
+            cudaMalloc(&d_input, row_count * sizeof(int64_t));
+            cudaMalloc(&d_output, selected_count * sizeof(int64_t));
+            int64_t *h_output_data = static_cast<int64_t *>(malloc(selected_count * sizeof(int64_t)));
+
+            cudaMemcpy(d_input, h_input_data, row_count * sizeof(int64_t), cudaMemcpyHostToDevice);
+            copySelectedRowsKernel<int64_t><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
+            cudaDeviceSynchronize();
+            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(int64_t), cudaMemcpyDeviceToHost);
+
+            filtered_table.data[col_idx] = h_output_data;
+            cudaFree(d_input);
+            cudaFree(d_output);
+        }
+        else if (col_type == DataType::STRING)
+        {
+            const char **h_input_strings = static_cast<const char **>(input_table.data[col_idx]);
+            const char **h_output_strings = static_cast<const char **>(malloc(selected_count * sizeof(char *)));
+
+            const char **d_input_strings;
+            cudaMalloc(&d_input_strings, row_count * sizeof(char *));
+            cudaMemcpy(d_input_strings, h_input_strings, row_count * sizeof(char *), cudaMemcpyHostToDevice);
+
+            const char **d_output_strings;
+            cudaMalloc(&d_output_strings, selected_count * sizeof(char *));
+
+            copySelectedStringRowsKernel<<<blocks, threads>>>(d_input_strings, d_output_strings, d_mask, d_positions, row_count);
+            cudaDeviceSynchronize();
+
+            cudaMemcpy(h_output_strings, d_output_strings, selected_count * sizeof(char *), cudaMemcpyDeviceToHost);
+
+            filtered_table.data[col_idx] = h_output_strings;
+            cudaFree(d_input_strings);
+            cudaFree(d_output_strings);
         }
     }
 
-    // {
-    //     filtered_table.columns.push_back(col);
-    // }
-    // for (size_t i = 0; i < input_table.row_count; ++i)
-    // {
-    //     bool row_matches = evaluateRow(input_table, i, num_cols);
-
-    //     if (row_matches)
-    //     {
-    //         for (size_t c = 0; c < num_cols; ++c)
-    //         {
-    //             filtered_table.rows.push_back(input_table.rows[i * num_cols + c]);
-    //         }
-    //         filtered_table.row_count++;
-    //     }
-    // }
+    cudaFree(d_mask);
+    cudaFree(d_positions);
+    delete[] h_selected_rows;
 
     return filtered_table;
 }
-
-// bool Filter::evaluateRow(const TableResults &table, size_t row_idx, size_t num_cols) const
-// {
-//     if (conditions.empty())
-//         return true;
-
-//     bool result = evaluateCondition(table, row_idx, num_cols, conditions[0]);
-//     size_t op_index = 0;
-
-//     for (size_t i = 1; i < conditions.size(); i++)
-//     {
-//         bool current = evaluateCondition(table, row_idx, num_cols, conditions[i]);
-
-//         if (op_index < logical_ops.size())
-//         {
-//             if (logical_ops[op_index] == "AND")
-//             {
-//                 result = result && current;
-//             }
-//             else if (logical_ops[op_index] == "OR")
-//             {
-//                 result = result || current;
-//             }
-//             op_index++;
-//         }
-//         else
-//         {
-//             result = result && current;
-//         }
-//     }
-
-//     return result;
-// }
-
-// bool Filter::evaluateCondition(const TableResults &table, size_t row_idx, size_t num_cols, const Condition &cond) const
-// {
-//     int col_idx = -1;
-//     for (size_t c = 0; c < table.columns.size(); ++c)
-//     {
-//         if (table.columns[c].name == cond.column)
-//         {
-//             col_idx = c;
-//             break;
-//         }
-//     }
-//     if (col_idx == -1)
-//     {
-//         std::cerr << "Column " << cond.column << " not found!\n";
-//         return false;
-//     }
-
-//     const auto &cell = table.rows[row_idx * num_cols + col_idx];
-
-//     if (cond.is_string)
-//     {
-//         if (!std::holds_alternative<std::string>(cell))
-//         {
-//             return false;
-//         }
-//         const std::string &cell_str = std::get<std::string>(cell);
-
-//         if (cond.op == "=")
-//             return cell_str == cond.value;
-//         if (cond.op == "!=")
-//             return cell_str != cond.value;
-
-//         std::cerr << "Operator " << cond.op << " not supported for string columns.\n";
-//         return false;
-//     }
-//     else
-//     {
-//         double cell_num = 0.0;
-//         if (std::holds_alternative<int>(cell))
-//         {
-//             cell_num = static_cast<double>(std::get<int>(cell));
-//         }
-//         else if (std::holds_alternative<int64_t>(cell))
-//         {
-//             cell_num = static_cast<double>(std::get<int64_t>(cell));
-//         }
-//         else if (std::holds_alternative<float>(cell))
-//         {
-//             cell_num = static_cast<double>(std::get<float>(cell));
-//         }
-
-//         double value_num = std::stod(cond.value);
-
-//         if (cond.op == ">")
-//             return cell_num > value_num;
-//         if (cond.op == "<")
-//             return cell_num < value_num;
-//         if (cond.op == ">=")
-//             return cell_num >= value_num;
-//         if (cond.op == "<=")
-//             return cell_num <= value_num;
-//         if (cond.op == "=")
-//             return std::abs(cell_num - value_num) < 1e-9;
-//         if (cond.op == "!=")
-//             return std::abs(cell_num - value_num) >= 1e-9;
-
-//         std::cerr << "Operator " << cond.op << " not supported.\n";
-//         return false;
-//     }
-// }
-
 void Filter::print() const
 {
     std::cout << "FILTER (";

@@ -93,16 +93,22 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
 
         switch (aggregates[i].type)
         {
+            /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
         case AggregateType::COUNT_STAR:
             break;
+            /*COUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNT*/
         case AggregateType::COUNT:
             break;
+            /*SUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUM*/
         case AggregateType::SUM:
             break;
+            /*AVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVG*/
         case AggregateType::AVG:
             break;
+            /*MINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMIN*/
         case AggregateType::MIN:
             break;
+        /* MAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAX*/
         case AggregateType::MAX:
             switch (input.columns[i].type)
             {
@@ -166,72 +172,50 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
             }
             case DataType::STRING:
             {
-                // const char **d_col_data = nullptr;
-                // cudaMalloc(&d_col_data, row_count * sizeof(char *));
-                // const char **host_strings = static_cast<const char **>(input_table.data[col_idx]);
-
-                // char **d_strings = new char *[row_count];
-
-                // for (size_t i = 0; i < row_count; i++)
-                // {
-                //     size_t len = strlen(host_strings[i]) + 1;
-                //     cudaMalloc(&d_strings[i], len);
-                //     cudaMemcpy(d_strings[i], host_strings[i], len, cudaMemcpyHostToDevice);
-                //     cudaMemcpy(&d_col_data[i], &d_strings[i], sizeof(char *), cudaMemcpyHostToDevice);
-                // }
-
-                // char *d_value = nullptr;
-                // cudaMalloc(&d_value, cond.value.size() + 1);
-                // cudaMemcpy(d_value, cond.value.c_str(), cond.value.size() + 1, cudaMemcpyHostToDevice);
-                // filterKernelString<<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, d_value, cond_code);
-
-                /////////////////////////////
                 char **d_input_char = nullptr, **d_output_char = nullptr;
                 cudaMalloc(&d_input_char, input.row_count * sizeof(char *));
                 cudaMalloc(&d_output_char, sizeof(char *));
 
-                // Allocate device memory for string pointers
                 char **d_strings = new char *[input.row_count];
                 const char **host_strings = static_cast<const char **>(input.data[aggregates[i].column_index]);
 
                 for (size_t j = 0; j < input.row_count; j++)
                 {
-                    size_t len = strlen(host_strings[j]) + 1; // Include null terminator
+                    size_t len = strlen(host_strings[j]) + 1;
                     cudaMalloc(&d_strings[j], len);
                     cudaMemcpy(d_strings[j], host_strings[j], len, cudaMemcpyHostToDevice);
                     cudaMemcpy(&d_input_char[j], &d_strings[j], sizeof(char *), cudaMemcpyHostToDevice);
                 }
 
-                // Launch the kernel to find the maximum element
                 findMaxElement<char *><<<numBlocks, numThreads, shared_mem_size>>>(
                     d_input_char, d_output_char, input.row_count);
                 cudaDeviceSynchronize();
 
-                // Copy the output pointer (char*) from device to host
                 char *d_max_string = nullptr;
                 cudaMemcpy(&d_max_string, d_output_char, sizeof(char *), cudaMemcpyDeviceToHost);
 
-                // Determine the length of the output string
                 size_t max_len = 0;
                 if (d_max_string)
                 {
-                    // Use a small kernel or cudaMemcpy to get the string length (or assume a max length)
-                    // For simplicity, assume a maximum length or query the length from the device
-                    // Here, we copy the string to host to get its length
-                    char temp_buffer[256]; // Temporary buffer (adjust size as needed)
-                    cudaMemcpy(temp_buffer, d_max_string, sizeof(temp_buffer), cudaMemcpyDeviceToHost);
-                    max_len = strlen(temp_buffer) + 1; // Include null terminator
+                    char temp_char;
+                    size_t offset = 0;
+                    do
+                    {
+                        cudaMemcpy(&temp_char, d_max_string + offset, 1, cudaMemcpyDeviceToHost);
+                        offset++;
+                    } while (temp_char != '\0');
+                    max_len = offset;
                 }
 
                 // Allocate host memory for the result string
                 char *h_output_string = new char[max_len];
                 cudaMemcpy(h_output_string, d_max_string, max_len, cudaMemcpyDeviceToHost);
-                std::cout << "Max string: " << h_output_string << std::endl;
+                // std::cout << "Max string: " << h_output_string << std::endl;
 
                 result.data[i] = new char *[1];
                 static_cast<char **>(result.data[i])[0] = h_output_string;
                 std::cout << "Max string: " << static_cast<char **>(result.data[i])[0] << std::endl;
-                result.print();
+                // result.print();
                 // Cleanup
                 for (size_t j = 0; j < input.row_count; j++)
                 {
@@ -240,8 +224,6 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
                 delete[] d_strings;
                 cudaFree(d_input_char);
                 cudaFree(d_output_char);
-                delete[] h_output_string;
-
                 break;
             }
             default:
@@ -285,14 +267,25 @@ DataType Aggregate::getOutputType(const AggregateFunction &agg, const TableResul
     switch (agg.type)
     {
     case AggregateType::COUNT_STAR:
+        return input.columns[agg.column_index].type;
     case AggregateType::COUNT:
-        return DataType::INT;
+        return input.columns[agg.column_index].type;
+
+        return input.columns[agg.column_index].type;
     case AggregateType::SUM:
+        return input.columns[agg.column_index].type;
+
     case AggregateType::AVG:
-        return DataType::FLOAT;
+        return input.columns[agg.column_index].type;
+
     case AggregateType::MIN:
+        return input.columns[agg.column_index].type;
+
     case AggregateType::MAX:
         return input.columns[agg.column_index].type;
+    default:
+        throw std::runtime_error("Unsupported aggregate type");
+        break;
     }
     return DataType::INT;
 }
@@ -447,133 +440,3 @@ void Aggregate::print() const
     }
     std::cout << ")\n";
 }
-
-// case DataType::STRING:
-// {
-//     char** d_input_char = nullptr, **d_output_char = nullptr;
-//     cudaMalloc(&d_input_char, input.row_count * sizeof(char*));
-//     cudaMalloc(&d_output_char, sizeof(char*));
-
-//     // Allocate device memory for string pointers
-//     char** d_strings = new char*[input.row_count];
-//     const char** host_strings = static_cast<const char**>(input.data[aggregates[i].column_index]);
-
-//     // First pass: find the maximum string length
-//     size_t max_len = 0;
-//     for (size_t j = 0; j < input.row_count; j++) {
-//         size_t len = strlen(host_strings[j]) + 1; // Include null terminator
-//         if (len > max_len) max_len = len;
-//     }
-
-//     // Second pass: copy all strings with proper allocation
-//     for (size_t j = 0; j < input.row_count; j++) {
-//         size_t len = strlen(host_strings[j]) + 1;
-//         cudaMalloc(&d_strings[j], max_len); // Allocate uniform size
-//         cudaMemcpy(d_strings[j], host_strings[j], len, cudaMemcpyHostToDevice);
-//         cudaMemcpy(&d_input_char[j], &d_strings[j], sizeof(char*), cudaMemcpyHostToDevice);
-//     }
-
-//     // Launch the kernel to find the maximum element
-//     findMaxElement<char*><<<numBlocks, numThreads, shared_mem_size>>>(
-//         d_input_char, d_output_char, input.row_count);
-//     cudaDeviceSynchronize();
-
-//     // Copy the output pointer (char*) from device to host
-//     char* d_max_string = nullptr;
-//     cudaMemcpy(&d_max_string, d_output_char, sizeof(char*), cudaMemcpyDeviceToHost);
-
-//     // Allocate host memory for the result string
-//     char* h_output_string = new char[max_len];
-//     cudaMemcpy(h_output_string, d_max_string, max_len, cudaMemcpyDeviceToHost);
-
-//     // Store result
-//     result.data[i] = new char[strlen(h_output_string) + 1];
-//     strcpy(static_cast<char*>(result.data[i]), h_output_string);
-//     std::cout << "Max string: " << static_cast<char*>(result.data[i]) << std::endl;
-
-//     // Cleanup
-//     for (size_t j = 0; j < input.row_count; j++) {
-//         cudaFree(d_strings[j]);
-//     }
-//     delete[] d_strings;
-//     cudaFree(d_input_char);
-//     cudaFree(d_output_char);
-//     delete[] h_output_string;
-
-//     break;
-// }
-
-// case DataType::STRING:
-// {
-//     char** d_input_char = nullptr;
-//     char** d_output_char = nullptr;
-//     cudaMalloc(&d_input_char, input.row_count * sizeof(char*));
-//     cudaMalloc(&d_output_char, sizeof(char*));
-
-//     // Allocate device memory for string pointers
-//     char** d_strings = new char*[input.row_count];
-//     const char** host_strings = static_cast<const char**>(input.data[aggregates[i].column_index]);
-
-//     // Copy each string to device memory
-//     for (size_t j = 0; j < input.row_count; j++) {
-//         size_t len = strlen(host_strings[j]) + 1; // Include null terminator
-//         cudaMalloc(&d_strings[j], len);
-//         cudaMemcpy(d_strings[j], host_strings[j], len, cudaMemcpyHostToDevice);
-//         cudaMemcpy(&d_input_char[j], &d_strings[j], sizeof(char*), cudaMemcpyHostToDevice);
-//     }
-
-//     // Launch the kernel to find the maximum element
-//     findMaxElement<char*><<<numBlocks, numThreads, shared_mem_size>>>(
-//         d_input_char, d_output_char, input.row_count);
-//     cudaDeviceSynchronize();
-
-//     // Copy the output pointer (char*) from device to host
-//     char* d_max_string = nullptr;
-//     cudaMemcpy(&d_max_string, d_output_char, sizeof(char*), cudaMemcpyDeviceToHost);
-
-//     // Get the actual string length from device
-//     size_t max_len = 0;
-//     if (d_max_string) {
-//         // First copy just the length (4 bytes should be enough for length prefix)
-//         uint32_t len_on_device = 0;
-//         cudaMemcpy(&len_on_device, d_max_string, sizeof(uint32_t), cudaMemcpyDeviceToHost);
-
-//         // If no length prefix, fall back to copying in chunks
-//         if (len_on_device > 1000000) { // Unreasonable length indicates no prefix
-//             const size_t chunk_size = 256;
-//             char buffer[chunk_size];
-//             size_t total_len = 0;
-
-//             do {
-//                 cudaMemcpy(buffer, d_max_string + total_len, chunk_size, cudaMemcpyDeviceToHost);
-//                 size_t chunk_len = strnlen(buffer, chunk_size);
-//                 total_len += chunk_len;
-//                 if (chunk_len < chunk_size) break;
-//             } while (true);
-
-//             max_len = total_len + 1;
-//         } else {
-//             max_len = len_on_device + 1;
-//         }
-//     }
-
-//     // Allocate host memory for the result string
-//     char* h_output_string = new char[max_len];
-//     cudaMemcpy(h_output_string, d_max_string, max_len, cudaMemcpyDeviceToHost);
-
-//     // Store result
-//     result.data[i] = new char[strlen(h_output_string) + 1];
-//     strcpy(static_cast<char*>(result.data[i]), h_output_string);
-//     std::cout << "Max string: " << static_cast<char*>(result.data[i]) << std::endl;
-
-//     // Cleanup
-//     for (size_t j = 0; j < input.row_count; j++) {
-//         cudaFree(d_strings[j]);
-//     }
-//     delete[] d_strings;
-//     cudaFree(d_input_char);
-//     cudaFree(d_output_char);
-//     delete[] h_output_string;
-
-//     break;
-// }

@@ -8,8 +8,8 @@
 
 // Struct for column metadata
 
-#define DATA_DIR "/mnt/e/Collage/PC - Parallel Computing/Project/dbms/data/"
-// #define DATA_DIR "/mnt/c/Users/LENOVE/Desktop/second term 4/p/PC-project/data/"
+// #define DATA_DIR "/mnt/e/Collage/PC - Parallel Computing/Project/dbms/data/"
+#define DATA_DIR "/mnt/c/Users/LENOVE/Desktop/second term 4/p/PC-project/data/"
 
 struct ColumnInfo
 {

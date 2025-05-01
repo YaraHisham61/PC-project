@@ -92,7 +92,40 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
     }
     else
     {
-        result = input_table;
+        result.column_count = output_names.size();
+        result.row_count = input_table.row_count;
+        result.data.resize(result.column_count);
+        int col_idx = 0;
+        for (const auto &name : this->output_names)
+        {
+            ColumnInfo col_info;
+            size_t input_index = input_table.getColumnIndex(name);
+            col_info = input_table.columns[input_index];
+            col_info.idx = col_idx;
+            result.columns.push_back(col_info);
+            switch (col_info.type)
+            {
+            case DataType::FLOAT:
+                result.data[col_idx] = static_cast<float *>(malloc(result.row_count * sizeof(float)));
+                result.data[col_idx] = input_table.data[input_index];
+                break;
+            case DataType::INT:
+                result.data[col_idx] = static_cast<int *>(malloc(result.row_count * sizeof(int)));
+                result.data[col_idx] = input_table.data[input_index];
+                break;
+            case DataType::DATETIME:
+                result.data[col_idx] = static_cast<int64_t *>(malloc(result.row_count * sizeof(int64_t)));
+                result.data[col_idx] = input_table.data[input_index];
+                break;
+            case DataType::STRING:
+                result.data[col_idx] = static_cast<char **>(malloc(result.row_count * sizeof(char *)));
+                result.data[col_idx] = input_table.data[input_index];
+                break;
+            default:
+                break;
+            }
+            col_idx++;
+        }
     }
 
     if (!output_names.empty())

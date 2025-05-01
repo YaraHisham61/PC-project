@@ -2,7 +2,7 @@
 #include "physical_plan/seq_scan.hpp"
 #include "physical_plan/projection.hpp"
 #include "physical_plan/filter.hpp"
-// #include "physical_plan/aggregate.hpp"
+#include "physical_plan/aggregate.hpp"
 std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
     DB *data_base,
@@ -34,7 +34,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     }
     else if (op_name == "UNGROUPED_AGGREGATE")
     {
-        // node = std::make_unique<Aggregate>(params);
+        node = std::make_unique<Aggregate>(params);
     }
 
     for (auto &child : op->children)
@@ -72,7 +72,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *filter_ptr = static_cast<Filter *>(node.get());
         TableResults filtered_result = filter_ptr->applyFilter(**input_table_ptr);
-        filtered_result.print();
+        // filtered_result.print();
         **input_table_ptr = std::move(filtered_result);
     }
     else if (op_name == "PROJECTION")
@@ -96,10 +96,10 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
             return nullptr;
         }
 
-        // auto *aggr_ptr = static_cast<Aggregate *>(node.get());
-        // TableResults aggregate_result = aggr_ptr->computeAggregates(**input_table_ptr);
+        auto *aggr_ptr = static_cast<Aggregate *>(node.get());
+        TableResults aggregate_result = aggr_ptr->computeAggregates(**input_table_ptr);
         // aggregate_result.print();
-        // **input_table_ptr = std::move(aggregate_result);
+        **input_table_ptr = std::move(aggregate_result);
     }
 
     return node;

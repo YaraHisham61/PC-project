@@ -71,23 +71,23 @@ __global__ void orKernel(bool *combined_mask, const bool *current_mask, size_t s
     }
 }
 
-// template <typename T>
-// __global__ void filterColumnKernel(const T *input, T *output, const bool *mask,
-//                                    const size_t row_count, unsigned long long *filtered_count)
-// {
-//     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-//     if (idx >= row_count)
-//         return;
+template <typename T>
+__global__ void filterColumnKernel(const T *input, T *output, const bool *mask,
+                                   const size_t row_count, unsigned long long *filtered_count)
+{
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= row_count)
+        return;
 
-//     if (mask[idx])
-//     {
-//         size_t pos = atomicAdd(filtered_count, 1ull);
-//         if (pos < row_count)
-//         { // Safety check
-//             output[pos] = input[idx];
-//         }
-//     }
-// }
+    if (mask[idx])
+    {
+        size_t pos = atomicAdd(filtered_count, 1ull);
+        if (pos < row_count)
+        { // Safety check
+            output[pos] = input[idx];
+        }
+    }
+}
 
 // __global__ void filterStringColumnKernel(const char **input, char **output, const bool *mask, const size_t row_count, unsigned long long *filtered_count)
 // {
@@ -108,60 +108,34 @@ __global__ void orKernel(bool *combined_mask, const bool *current_mask, size_t s
 //     }
 // }
 
-__global__ void computeOutputPositions(const bool *mask, unsigned int *positions, size_t size)
-{
+__global__ void computeOutputPositions(const bool* mask, unsigned int* positions, size_t size) {
     extern __shared__ unsigned int temp[];
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + tid;
-
-    // Load and calculate block prefix
-    unsigned int val = (idx < size && mask[idx]) ? 1 : 0;
-    temp[tid] = val;
+    
+    temp[tid] = (idx < size && mask[idx]) ? 1 : 0;
     __syncthreads();
-
-    // Parallel prefix sum within block
-    for (unsigned int s = 1; s < blockDim.x; s *= 2)
-    {
-        if (tid >= s)
-        {
+    
+    for (unsigned int s = 1; s < blockDim.x; s *= 2) {
+        if (tid >= s) {
             temp[tid] += temp[tid - s];
         }
         __syncthreads();
     }
-
-    // Store block result
-    if (idx < size)
-    {
+    
+    if (idx < size) {
         positions[idx] = temp[tid];
     }
-    __syncthreads();
-
-    // If last thread in block, store block total
-    if (tid == blockDim.x - 1)
-    {
-        temp[0] = temp[tid]; // Store block sum
-    }
-    __syncthreads();
-
-    // First block adds prefix sums from previous blocks
-    if (blockIdx.x > 0)
-    {
-        if (tid == 0)
-        {
-            // Get sum from previous block
-            unsigned int prefix = 0;
-            for (int i = 0; i < blockIdx.x; i++)
-            {
-                unsigned int *prev_block = positions + i * blockDim.x;
-                prefix += prev_block[blockDim.x - 1];
-            }
-            // Add prefix to all elements in this block
-            for (int i = 0; i < blockDim.x && (blockIdx.x * blockDim.x + i) < size; i++)
-            {
-                positions[blockIdx.x * blockDim.x + i] += prefix;
-            }
+    
+    if (blockIdx.x > 0 && tid == 0) {
+        unsigned int prefix = 0;
+        for (int i = 0; i < blockIdx.x; i++) {
+            prefix += positions[(i + 1) * blockDim.x - 1];
         }
-        __syncthreads();
+        
+        for (int i = 0; i < blockDim.x && (blockIdx.x * blockDim.x + i) < size; i++) {
+            atomicAdd(&positions[blockIdx.x * blockDim.x + i], prefix);
+        }
     }
 }
 

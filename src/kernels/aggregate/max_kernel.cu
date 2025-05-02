@@ -204,12 +204,9 @@ __global__ void findMaxElement<char *>(char **input, char **output, int size)
         }
     }
 }
-// Explicit instantiations
-template __device__ int atomicMaxGeneric<int>(int *, int);
 template __device__ float atomicMaxGeneric<float>(float *, float);
 template __device__ uint64_t atomicMaxGeneric<uint64_t>(uint64_t *, uint64_t);
 
-template __global__ void findMaxElement<int>(int *, int *, int);
 template __global__ void findMaxElement<float>(float *, float *, int);
 template __global__ void findMaxElement<uint64_t>(uint64_t *, uint64_t *, int);
 template __global__ void findMaxElement<char *>(char **, char **, int);

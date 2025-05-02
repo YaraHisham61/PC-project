@@ -7,19 +7,15 @@
 
 enum class DataType : __uint8_t
 {
-    INT,
     FLOAT,
     DATETIME,
     STRING
 };
 
-
 [[nodiscard]] inline std::string getDataTypeString(DataType type)
 {
     switch (type)
     {
-    case DataType::INT:
-        return "INT";
     case DataType::FLOAT:
         return "FLOAT";
     case DataType::DATETIME:
@@ -27,23 +23,22 @@ enum class DataType : __uint8_t
     case DataType::STRING:
         return "STRING";
     default:
-        return "INT";
+        return "FLOAT";
     }
 }
 
 [[nodiscard]] inline uint8_t getDataTypeNumBytes(DataType type)
 {
-    if (type == DataType::INT)
-        return sizeof(int); // 32-bit
+
     if (type == DataType::FLOAT)
         return sizeof(float); // 32-bit
     if (type == DataType::DATETIME)
-        return sizeof(int64_t); // 64-bit timestamp //TODO: recheck it
+        return sizeof(uint64_t); // 64-bit timestamp //TODO: recheck it
     if (type == DataType::STRING)
         return MAX_STR_LEN; // 1 char = 1 byte
     return 0;               // Fallback for unhandled cases
 }
-[[nodiscard]] inline int64_t getDateTime(const std::string &valueStr)
+[[nodiscard]] inline uint64_t getDateTime(const std::string &valueStr)
 {
     std::tm valueTm = {};
     // Initialize all fields to avoid garbage values
@@ -64,10 +59,10 @@ enum class DataType : __uint8_t
     // Convert to time_t (seconds since epoch)
     time_t timeValue = mktime(&valueTm); // Use timegm for UTC or mktime for local time
 
-    return static_cast<int64_t>(timeValue);
+    return static_cast<uint64_t>(timeValue);
 }
 
-[[nodiscard]] inline std::string getDateTimeStr(int64_t seconds)
+[[nodiscard]] inline std::string getDateTimeStr(uint64_t seconds)
 {
     std::time_t raw_time = static_cast<std::time_t>(seconds);
 

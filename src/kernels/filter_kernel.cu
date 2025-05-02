@@ -162,10 +162,8 @@ __global__ void copySelectedStringRowsKernel(const char **input, const char **ou
     }
 }
 
-template __global__ void filterKernel<int>(const int *, bool *, size_t, int, uint8_t);
 template __global__ void filterKernel<float>(const float *, bool *, size_t, float, uint8_t);
 template __global__ void filterKernel<int64_t>(const int64_t *, bool *, size_t, int64_t, uint8_t);
 
-template __global__ void copySelectedRowsKernel<int>(const int *, int *, const bool *, const unsigned int *, const size_t);
 template __global__ void copySelectedRowsKernel<float>(const float *, float *, const bool *, const unsigned int *, const size_t);
 template __global__ void copySelectedRowsKernel<int64_t>(const int64_t *, int64_t *, const bool *, const unsigned int *, const size_t);

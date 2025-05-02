@@ -3,12 +3,10 @@
 #include "kernels/aggregate/max_kernel.hpp"
 #include "kernels/aggregate/min_kernel.hpp"
 #include "kernels/aggregate/sum_kernel.hpp"
-#include "kernels/aggregate/avg_kernel.hpp"
 #include "kernels/aggregate/count_kernel.hpp"
 #include "kernels/aggregate/count_star_kernel.hpp"
 #include <cuda_runtime.h>
 #include <sstream>
-
 
 enum class AggregateType
 {

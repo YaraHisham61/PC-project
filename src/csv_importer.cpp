@@ -41,69 +41,6 @@ bool CSVImporter::import_folder(const std::string &folder_path, DB *data_base)
     }
 }
 
-TableResults CSVImporter::read_table(DB *data_base, const std::string &table_name, const std::vector<std::string> &cols)
-{
-    TableResults result;
-    // std::string csv_file = DATA_DIR + table_name + ".csv";
-    // rapidcsv::Document doc(csv_file);
-    // std::vector<std::string> cols_to_read;
-
-    // if (cols.empty())
-    // {
-    //     // read_whole_table(data_base, table_name, &result);
-    //     // return result;
-    //     cols_to_read = data_base->get_table(table_name)->getColumnNames();
-    // }
-    // else
-    // {
-    //     cols_to_read = cols;
-    // }
-
-    // // First pass: set up columns
-    // for (const auto &col_name : cols_to_read)
-    // {
-    //     ColumnInfo *c = data_base->get_column(table_name, col_name);
-    //     if (!c)
-    //     {
-    //         std::cerr << "Column " << col_name << " not found in table " << table_name << std::endl;
-    //         continue;
-    //     }
-    //     result.columns.push_back(*c);
-    // }
-    // result.column_count = result.columns.size();
-    // result.row_count = doc.GetRowCount();
-
-    // // Second pass: read data row by row
-    // for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
-    // {
-    //     for (size_t col_idx = 0; col_idx < result.column_count; ++col_idx)
-    //     {
-    //         const auto &col_info = result.columns[col_idx];
-    //         std::string col_name = get_original_column_name(&col_info, cols_to_read[col_idx]);
-
-    //         switch (col_info.type)
-    //         {
-    //         case DataType::FLOAT:
-    //             result.rows.push_back(doc.GetCell<float>(col_name, row_idx));
-    //             break;
-    //         case DataType::INT:
-    //             result.rows.push_back(doc.GetCell<int>(col_name, row_idx));
-    //             break;
-    //         case DataType::DATETIME:
-    //             result.rows.push_back(doc.GetCell<int64_t>(col_name, row_idx));
-    //             break;
-    //         case DataType::STRING:
-    //             result.rows.push_back(doc.GetCell<std::string>(col_name, row_idx));
-    //             break;
-    //         default:
-    //             result.rows.push_back(doc.GetCell<float>(col_name, row_idx));
-    //             break;
-    //         }
-    //     }
-    // }
-
-    return result;
-}
 bool CSVImporter::import_csv(const std::string &csv_file, DB *data_base, const std::string &table_name)
 {
     try
@@ -170,7 +107,7 @@ std::string CSVImporter::get_original_column_name(const ColumnInfo *c, const std
     {
         new_col_name = col_name + " (D)";
     }
-    else if (c->type == DataType::FLOAT || c->type == DataType::INT)
+    else if (c->type == DataType::FLOAT)
     {
         new_col_name = col_name + " (N)";
     }

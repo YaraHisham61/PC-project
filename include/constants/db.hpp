@@ -77,11 +77,8 @@ public:
         {
             for (size_t col = 0; col < column_count; ++col)
             {
-                if (columns[col].type == DataType::INT)
-                {
-                    std::cout << static_cast<int *>(data[col])[row] << "\t";
-                }
-                else if (columns[col].type == DataType::FLOAT)
+        
+                if (columns[col].type == DataType::FLOAT)
                 {
                     std::cout << static_cast<float *>(data[col])[row] << "\t";
                 }

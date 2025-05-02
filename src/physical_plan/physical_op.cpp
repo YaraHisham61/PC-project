@@ -51,7 +51,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     {
         auto *seq_ptr = static_cast<SeqScan *>(node.get());
         TableResults scan_result = seq_ptr->read_scan_table(data_base);
-        // scan_result.print();
+        scan_result.print();
         if (*input_table_ptr)
         {
             **input_table_ptr = std::move(scan_result);
@@ -98,7 +98,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *aggr_ptr = static_cast<Aggregate *>(node.get());
         TableResults aggregate_result = aggr_ptr->computeAggregates(**input_table_ptr);
-        aggregate_result.print();
+        // aggregate_result.print();
         **input_table_ptr = std::move(aggregate_result);
     }
 

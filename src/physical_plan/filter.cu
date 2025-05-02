@@ -166,16 +166,7 @@ bool *Filter::getSelectedRows(const TableResults &input_table) const
         cudaMalloc(&d_temp_mask, row_count * sizeof(bool));
         cudaMemset(d_temp_mask, 0, row_count * sizeof(bool));
 
-        if (col_type == DataType::INT)
-        {
-            int *d_col_data = nullptr;
-            cudaMalloc(&d_col_data, row_count * sizeof(int));
-            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(int), cudaMemcpyHostToDevice);
-            int value = std::stoi(cond.value);
-            filterKernel<int><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
-            cudaFree(d_col_data);
-        }
-        else if (col_type == DataType::FLOAT)
+        if (col_type == DataType::FLOAT)
         {
             float *d_col_data = nullptr;
             cudaMalloc(&d_col_data, row_count * sizeof(float));
@@ -303,24 +294,7 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
     {
         const DataType col_type = input_table.columns[col_idx].type;
 
-        if (col_type == DataType::INT)
-        {
-            int *h_input_data = static_cast<int *>(input_table.data[col_idx]);
-            int *d_input, *d_output;
-            cudaMalloc(&d_input, row_count * sizeof(int));
-            cudaMalloc(&d_output, selected_count * sizeof(int));
-            int *h_output_data = static_cast<int *>(malloc(selected_count * sizeof(int)));
-
-            cudaMemcpy(d_input, h_input_data, row_count * sizeof(int), cudaMemcpyHostToDevice);
-            copySelectedRowsKernel<int><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
-            cudaDeviceSynchronize();
-            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(int), cudaMemcpyDeviceToHost);
-
-            filtered_table.data[col_idx] = h_output_data;
-            cudaFree(d_input);
-            cudaFree(d_output);
-        }
-        else if (col_type == DataType::FLOAT)
+        if (col_type == DataType::FLOAT)
         {
             float *h_input_data = static_cast<float *>(input_table.data[col_idx]);
             float *d_input, *d_output;

@@ -63,7 +63,7 @@ int main()
     // std::string query = "SELECT * FROM Student WHERE year >2019 or id = 500; ";
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT max(id),max(year),count(name),count(name) FROM Student;";
-    std::string query = "SELECT max(name),max(year),max(id) FROM Student WHERE year >2019 or id = 500;";
+    std::string query = "SELECT * FROM table_1";
     // std::string query = "SELECT id,year,name,name FROM Student;";
     profiler.start("Get Logical Plan");
     auto logical_plan = duckdb_interface.getLogicalPlan(query);

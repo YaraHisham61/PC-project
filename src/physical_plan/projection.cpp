@@ -37,6 +37,7 @@ void Projection::parseProjectionList(const std::string &projection_list)
 TableResults Projection::applyProjection(const TableResults &input_table) const
 {
     TableResults result;
+    auto modified_names = this->output_names;
 
     if (input_table.column_count == 0 || input_table.row_count == 0)
     {
@@ -69,10 +70,6 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
                 result.data[col_idx] = static_cast<float *>(malloc(result.row_count * sizeof(float)));
                 memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(float));
                 break;
-            case DataType::INT:
-                result.data[col_idx] = static_cast<int *>(malloc(result.row_count * sizeof(int)));
-                memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(int));
-                break;
             case DataType::DATETIME:
                 result.data[col_idx] = static_cast<int64_t *>(malloc(result.row_count * sizeof(int64_t)));
                 memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(int64_t));
@@ -92,12 +89,19 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
     }
     else
     {
-        result.column_count = output_names.size();
+        result.column_count = modified_names.size();
         result.row_count = input_table.row_count;
         result.data.resize(result.column_count);
-        int col_idx = 0;
-        for (const auto &name : this->output_names)
+        // int col_idx = 0;
+        for (size_t col_idx = 0; col_idx < modified_names.size(); ++col_idx)
         {
+
+            auto &name = modified_names[col_idx];
+            if (name.find("CAST(") != std::string::npos)
+            {
+                modified_names[col_idx] = extract_base_column_name(name);
+            }
+
             ColumnInfo col_info;
             size_t input_index = input_table.getColumnIndex(name);
             col_info = input_table.columns[input_index];
@@ -109,10 +113,7 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
                 result.data[col_idx] = static_cast<float *>(malloc(result.row_count * sizeof(float)));
                 result.data[col_idx] = input_table.data[input_index];
                 break;
-            case DataType::INT:
-                result.data[col_idx] = static_cast<int *>(malloc(result.row_count * sizeof(int)));
-                result.data[col_idx] = input_table.data[input_index];
-                break;
+
             case DataType::DATETIME:
                 result.data[col_idx] = static_cast<int64_t *>(malloc(result.row_count * sizeof(int64_t)));
                 result.data[col_idx] = input_table.data[input_index];
@@ -124,20 +125,21 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
             default:
                 break;
             }
-            col_idx++;
         }
     }
 
-    if (!output_names.empty())
+    if (!modified_names.empty())
     {
-        if (output_names.size() != result.columns.size())
+        if (modified_names.size() != result.columns.size())
         {
+            
             throw std::runtime_error("Output names count doesn't match projection result columns count");
         }
 
         for (size_t i = 0; i < result.columns.size(); ++i)
         {
-            result.columns[i].name = output_names[i];
+
+            result.columns[i].name = modified_names[i];
         }
     }
 
@@ -151,4 +153,19 @@ void Projection::print() const
         std::cout << name << " ";
     }
     std::cout << "\n";
+}
+
+std::string Projection::extract_base_column_name(std::string column_name) const
+{
+    if (column_name.find("CAST(") == 0 && column_name.find(")") != std::string::npos)
+    {
+        size_t start = column_name.find("(") + 1;
+        size_t end = column_name.find(" AS ");
+
+        if (end != std::string::npos)
+        {
+            return column_name.substr(start, end - start);
+        }
+    }
+    return column_name;
 }

@@ -67,7 +67,7 @@ TableResults SeqScan::read_scan_table(DB *data_base)
     }
     result.column_count = result.columns.size();
     result.row_count = doc.GetRowCount();
-    result.data.resize(result.column_count);    
+    result.data.resize(result.column_count);
 
     for (const auto &col : result.columns)
     {
@@ -83,19 +83,15 @@ TableResults SeqScan::read_scan_table(DB *data_base)
                 static_cast<float *>(result.data[col.idx])[row_idx] = value;
             }
             break;
-        case DataType::INT:
-            result.data[col.idx] = static_cast<int *>(malloc(result.row_count * sizeof(int)));
-            for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
-            {
-                static_cast<int *>(result.data[col.idx])[row_idx] = doc.GetCell<int>(col_name, row_idx);
-            }
-            break;
+
         case DataType::DATETIME:
-            result.data[col.idx] = static_cast<int64_t *>(malloc(result.row_count * sizeof(int64_t)));
+            result.data[col.idx] = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
 
             for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
             {
-                static_cast<int64_t *>(result.data[col.idx])[row_idx] = doc.GetCell<int64_t>(col_name, row_idx);
+                std::string date_str = doc.GetCell<std::string>(col_name, row_idx);
+
+                static_cast<uint64_t *>(result.data[col.idx])[row_idx] = getDateTime(date_str);
             }
             break;
         case DataType::STRING:
@@ -126,7 +122,7 @@ std::string SeqScan::get_original_column_name(const ColumnInfo *c, const std::st
     {
         new_col_name = col_name + " (D)";
     }
-    else if (c->type == DataType::FLOAT || c->type == DataType::INT)
+    else if (c->type == DataType::FLOAT)
     {
         new_col_name = col_name + " (N)";
     }

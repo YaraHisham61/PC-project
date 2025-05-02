@@ -9,3 +9,5 @@ build/
 .idea/
 *./vendor/duckdb
 *CMakeLists.txt
+CMakeLists.txt
+/CMakeLists.txt

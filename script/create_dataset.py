@@ -18,8 +18,8 @@ import pandas as pd
 # num_tables =  3
 
 # normal Config
-min_num_records = 1_0
-max_num_record = 1_1
+min_num_records = 1_000
+max_num_record = 1_001
 min_columns = 3
 max_columns = 5
 min_pk_columns = 1

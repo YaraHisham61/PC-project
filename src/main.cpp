@@ -3,7 +3,6 @@
 #include "dbms/duckdb_interface.hpp"
 #include "dbms/profiler.hpp"
 #include "constants/db.hpp"
-#include "dbms/gpu_executor.hpp"
 #include "physical_plan/physical_op.hpp"
 #include <memory>
 void printPhysicalPlan(duckdb::PhysicalOperator *node, int depth = 0)
@@ -58,13 +57,13 @@ int main()
     con.BeginTransaction();
     // Query to analyze
 
-    std::string query = "SELECT id FROM table_1 order by id Desc;";
+    // std::string query = "SELECT id FROM table_1 order by id Desc;";
     // std::string query = "SELECT COUNT(name) FROM Student;";
     // std::string query = "SELECT * FROM Student WHERE year >2019 or id = 500; ";
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
-    // std::string query = "SELECT max(id),count(id),min(id) FROM Student;";
-    // std::string query = "SELECT * FROM  table_4 t4 , table_1 t1 WHERE t4.last_modified= t1.completion_date ;";
-    // std::string query = "SELECT t1.address, t4.name, t4.id FROM  Student t4 , Addresses t1 WHERE t4.name= t1.address;";
+    // std::string query = "SELECT count(*) ,count(name) FROM Student;";
+    // std::string query = "SELECT t1.id , t5.table_1_id , t4.table_1_id FROM  table_1 t1 , table_5 t5, table_4 t4 where t1.id = t5.table_1_id and t1.id = t4.table_1_id and t1.id >8000";
+    std::string query = "SELECT * FROM  table1 t4 , table4 t1 WHERE t4.id= t1.table_1_id and t1.last_modified = t4.completion_date;";
 
     // std::string query = "SELECT id,year,name,name FROM Student;";
     profiler.start("Get Logical Plan");

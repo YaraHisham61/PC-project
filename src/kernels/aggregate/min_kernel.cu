@@ -21,18 +21,6 @@ __device__ T atomicMinGeneric(T *address, T val)
         } while (assumed != old);
         return __int_as_float(old);
     }
-    else if constexpr (std::is_same<T, int>::value)
-    {
-        int old = *address, assumed;
-        do
-        {
-            assumed = old;
-            if (assumed <= val)
-                break;
-            old = atomicCAS(address, assumed, val);
-        } while (assumed != old);
-        return old;
-    }
     else if constexpr (std::is_same<T, uint64_t>::value)
     {
         uint64_t old = *address, assumed;
@@ -133,15 +121,18 @@ __global__ void findMinElement(T *input, T *output, int size)
     if (warp_id == 0 && lane_id < num_warps && lane_id * 32 < size)
     {
         local_min = warp_mins[lane_id];
-        printf("Before reduction, lane %d: %f\n", lane_id, local_min);
+        // printf("Before reduction, lane %d: %f\n", lane_id, local_min);
 
         unsigned reduction_mask = __ballot_sync(0xffffffff, lane_id < num_warps && lane_id * 32 < size);
         for (int offset = 16; offset > 0; offset /= 2)
         {
+            // printf("Before Before reduction, lane %d: %f\n", lane_id, local_min);
             T neighbor = __shfl_down_sync(reduction_mask, local_min, offset);
             if (lane_id + offset < num_warps && (lane_id + offset) * 32 < size)
             {
+
                 local_min = min(local_min, neighbor);
+                // printf("After reduction, lane %d: %f\n", lane_id, local_min);
             }
         }
 

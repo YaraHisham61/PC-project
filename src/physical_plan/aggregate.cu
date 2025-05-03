@@ -93,86 +93,86 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
 
         switch (aggregates[i].type)
         {
-        /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
-        // case AggregateType::COUNT_STAR:
-        // {
-        //     switch (input.columns[0].type)
-        //     {
-        //     case DataType::FLOAT:
-        //     {
-        //         float *d_input = nullptr;
-        //         float *d_output = nullptr;
-        //         cudaMalloc(&d_input, input.row_count * sizeof(float));
-        //         cudaMalloc(&d_output, sizeof(float));
-        //         cudaMemset(d_output, 0, sizeof(float));
+            /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
+            // case AggregateType::COUNT_STAR:
+            // {
+            //     switch (input.columns[0].type)
+            //     {
+            //     case DataType::FLOAT:
+            //     {
+            //         float *d_input = nullptr;
+            //         float *d_output = nullptr;
+            //         cudaMalloc(&d_input, input.row_count * sizeof(float));
+            //         cudaMalloc(&d_output, sizeof(float));
+            //         cudaMemset(d_output, 0, sizeof(float));
 
-        //         cudaMemcpy(d_input, input.data[0],
-        //                    input.row_count * sizeof(float), cudaMemcpyHostToDevice);
+            //         cudaMemcpy(d_input, input.data[0],
+            //                    input.row_count * sizeof(float), cudaMemcpyHostToDevice);
 
-        //         countStar<float><<<numBlocks, numThreads, shared_mem_size>>>(
-        //             d_input, d_output, input.row_count);
-        //         cudaDeviceSynchronize();
+            //         countStar<float><<<numBlocks, numThreads, shared_mem_size>>>(
+            //             d_input, d_output, input.row_count);
+            //         cudaDeviceSynchronize();
 
-        //         float count_value;
-        //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-        //         result.data[i] = new float(count_value);
+            //         float count_value;
+            //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+            //         result.data[i] = new float(count_value);
 
-        //         cudaFree(d_input);
-        //         cudaFree(d_output);
-        //         break;
-        //     }
-        //     case DataType::DATETIME:
-        //     {
-        //         uint64_t *d_input = nullptr;
-        //         float *d_output = nullptr;
-        //         cudaMalloc(&d_input, input.row_count * sizeof(uint64_t));
-        //         cudaMalloc(&d_output, sizeof(float));
-        //         cudaMemset(d_output, 0, sizeof(float));
+            //         cudaFree(d_input);
+            //         cudaFree(d_output);
+            //         break;
+            //     }
+            //     case DataType::DATETIME:
+            //     {
+            //         uint64_t *d_input = nullptr;
+            //         float *d_output = nullptr;
+            //         cudaMalloc(&d_input, input.row_count * sizeof(uint64_t));
+            //         cudaMalloc(&d_output, sizeof(float));
+            //         cudaMemset(d_output, 0, sizeof(float));
 
-        //         cudaMemcpy(d_input, input.data[0],
-        //                    input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+            //         cudaMemcpy(d_input, input.data[0],
+            //                    input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
-        //         countStar<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
-        //             d_input, d_output, input.row_count);
-        //         cudaDeviceSynchronize();
+            //         countStar<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
+            //             d_input, d_output, input.row_count);
+            //         cudaDeviceSynchronize();
 
-        //         float count_value;
-        //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-        //         result.data[i] = new float(count_value);
+            //         float count_value;
+            //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+            //         result.data[i] = new float(count_value);
 
-        //         cudaFree(d_input);
-        //         cudaFree(d_output);
-        //         break;
-        //     }
-        //     case DataType::STRING:
-        //     {
-        //         char **d_input = nullptr;
-        //         float *d_output = nullptr;
-        //         cudaMalloc(&d_input, input.row_count * sizeof(char *));
-        //         cudaMalloc(&d_output, sizeof(float));
-        //         cudaMemset(d_output, 0, sizeof(float));
+            //         cudaFree(d_input);
+            //         cudaFree(d_output);
+            //         break;
+            //     }
+            //     case DataType::STRING:
+            //     {
+            //         char **d_input = nullptr;
+            //         float *d_output = nullptr;
+            //         cudaMalloc(&d_input, input.row_count * sizeof(char *));
+            //         cudaMalloc(&d_output, sizeof(float));
+            //         cudaMemset(d_output, 0, sizeof(float));
 
-        //         // Only copy the pointers, not string contents
-        //         cudaMemcpy(d_input, input.data[0],
-        //                    input.row_count * sizeof(char *), cudaMemcpyHostToDevice);
+            //         // Only copy the pointers, not string contents
+            //         cudaMemcpy(d_input, input.data[0],
+            //                    input.row_count * sizeof(char *), cudaMemcpyHostToDevice);
 
-        //         countStar<char *><<<numBlocks, numThreads, shared_mem_size>>>(
-        //             d_input, d_output, input.row_count);
-        //         cudaDeviceSynchronize();
+            //         countStar<char *><<<numBlocks, numThreads, shared_mem_size>>>(
+            //             d_input, d_output, input.row_count);
+            //         cudaDeviceSynchronize();
 
-        //         float count_value;
-        //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-        //         result.data[i] = new float(count_value);
+            //         float count_value;
+            //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+            //         result.data[i] = new float(count_value);
 
-        //         cudaFree(d_input);
-        //         cudaFree(d_output);
-        //         break;
-        //     }
-        //     default:
-        //         break;
-        //     }
-        //     break;
-        // }
+            //         cudaFree(d_input);
+            //         cudaFree(d_output);
+            //         break;
+            //     }
+            //     default:
+            //         break;
+            //     }
+            //     break;
+            // }
             /*COUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNT*/
         case AggregateType::COUNT:
         {
@@ -378,7 +378,7 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
 
                 uint64_t init_val = UINT64_MAX;
                 std::cout << "init_val: " << init_val << std::endl;
-                cudaMemcpy(d_output_ui, &init_val, sizeof(float), cudaMemcpyHostToDevice);
+                cudaMemcpy(d_output_ui, &init_val, sizeof(uint64_t), cudaMemcpyHostToDevice);
 
                 cudaMemcpy(d_input_ui, input.data[aggregates[i].column_index],
                            input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);

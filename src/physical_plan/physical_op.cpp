@@ -4,6 +4,7 @@
 #include "physical_plan/filter.hpp"
 #include "physical_plan/join.hpp"
 #include "physical_plan/aggregate.hpp"
+#include "physical_plan/order_by.hpp"
 std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
     DB *data_base,
@@ -41,7 +42,10 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     {
         node = std::make_unique<HashJoin>(params);
     }
-
+    else if (op_name == "ORDER_BY")
+    {
+        node = std::make_unique<OrderBy>(params);
+    }
     if (op_name == "HASH_JOIN")
     {
         auto *join_ptr = static_cast<HashJoin *>(node.get());
@@ -127,6 +131,11 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         }
 
         auto *proj_ptr = static_cast<Projection *>(node.get());
+        if (proj_ptr->flag == true)
+        {
+            if ((op->children[0].get().GetName()) == "HASH_JOIN")
+                return node;
+        }
         TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
         projected_result.print();
         **input_table_ptr = std::move(projected_result);

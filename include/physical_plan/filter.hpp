@@ -28,5 +28,5 @@ public:
     void parseSimpleCondition(const std::string &expr);
     void parseComplexCondition(const std::string &expr);
     Condition parseSingleCondition(const std::string &cond_expr) const;
-
+    void removeTimestampSuffixSimple();
 };

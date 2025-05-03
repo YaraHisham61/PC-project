@@ -79,31 +79,53 @@ TableResults SeqScan::read_scan_table(DB *data_base)
             result.data[col.idx] = static_cast<float *>(malloc(result.row_count * sizeof(float)));
             for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
             {
-                float value = doc.GetCell<float>(col_name, row_idx);
-                static_cast<float *>(result.data[col.idx])[row_idx] = value;
+                try
+                {
+                    float value = doc.GetCell<float>(col_name, row_idx);
+                    static_cast<float *>(result.data[col.idx])[row_idx] = value;
+                }
+                catch (const std::exception &e)
+                {
+                    // Use NaN for null float values
+                    static_cast<float *>(result.data[col.idx])[row_idx] = std::numeric_limits<float>::quiet_NaN();
+                }
             }
             break;
 
         case DataType::DATETIME:
             result.data[col.idx] = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
-
             for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
             {
-                std::string date_str = doc.GetCell<std::string>(col_name, row_idx);
-
-                static_cast<uint64_t *>(result.data[col.idx])[row_idx] = getDateTime(date_str);
+                try
+                {
+                    std::string date_str = doc.GetCell<std::string>(col_name, row_idx);
+                    static_cast<uint64_t *>(result.data[col.idx])[row_idx] = getDateTime(date_str);
+                }
+                catch (const std::exception &e)
+                {
+                    static_cast<uint64_t *>(result.data[col.idx])[row_idx] = 0;
+                }
             }
             break;
+
         case DataType::STRING:
             result.data[col.idx] = static_cast<char **>(malloc(result.row_count * sizeof(char *)));
             for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
             {
-                std::string str_value = doc.GetCell<std::string>(col_name, row_idx);
-                static_cast<char **>(result.data[col.idx])[row_idx] = strdup(str_value.c_str());
+                try
+                {
+                    std::string str_value = doc.GetCell<std::string>(col_name, row_idx);
+                    static_cast<char **>(result.data[col.idx])[row_idx] = strdup(str_value.c_str());
+                }
+                catch (const std::exception &e)
+                {
+                    static_cast<char **>(result.data[col.idx])[row_idx] = nullptr;
+                }
             }
             break;
+
         default:
-            break;
+            throw std::runtime_error("Unsupported data type in column processing");
         }
     }
 

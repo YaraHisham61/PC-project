@@ -7,9 +7,22 @@ Filter::Filter(const duckdb::InsertionOrderPreservingMap<std::string> &params)
     if (it != params.end())
     {
         parseConditions(it->second);
+        removeTimestampSuffixSimple();
     }
 }
+void Filter::removeTimestampSuffixSimple()
+{
+    const std::string suffix = "::TIMESTAMP";
 
+    for (auto &cond : conditions)
+    {
+        size_t pos = cond.value.rfind(suffix);
+        if (pos != std::string::npos)
+        {
+            cond.value = cond.value.substr(1, pos - 1);
+        }
+    }
+}
 std::string Filter::trim(const std::string &str) const
 {
     size_t first = str.find_first_not_of(" \t\n\r");
@@ -177,11 +190,11 @@ bool *Filter::getSelectedRows(const TableResults &input_table) const
         }
         else if (col_type == DataType::DATETIME)
         {
-            int64_t *d_col_data = nullptr;
-            cudaMalloc(&d_col_data, row_count * sizeof(int64_t));
-            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(int64_t), cudaMemcpyHostToDevice);
-            int64_t value = std::stoll(cond.value);
-            filterKernel<int64_t><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
+            uint64_t *d_col_data = nullptr;
+            cudaMalloc(&d_col_data, row_count * sizeof(uint64_t));
+            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+            uint64_t value = getDateTime(cond.value);
+            filterKernel<uint64_t><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
             cudaFree(d_col_data);
         }
         else if (col_type == DataType::STRING)
@@ -300,7 +313,7 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
             float *d_input, *d_output;
             cudaMalloc(&d_input, row_count * sizeof(float));
             cudaMalloc(&d_output, selected_count * sizeof(float));
-            
+
             float *h_output_data = static_cast<float *>(malloc(selected_count * sizeof(float)));
             cudaMemcpy(d_input, h_input_data, row_count * sizeof(float), cudaMemcpyHostToDevice);
             copySelectedRowsKernel<float><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
@@ -313,16 +326,16 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
         }
         else if (col_type == DataType::DATETIME)
         {
-            int64_t *h_input_data = static_cast<int64_t *>(input_table.data[col_idx]);
-            int64_t *d_input, *d_output;
-            cudaMalloc(&d_input, row_count * sizeof(int64_t));
-            cudaMalloc(&d_output, selected_count * sizeof(int64_t));
-            int64_t *h_output_data = static_cast<int64_t *>(malloc(selected_count * sizeof(int64_t)));
+            uint64_t *h_input_data = static_cast<uint64_t *>(input_table.data[col_idx]);
+            uint64_t *d_input, *d_output;
+            cudaMalloc(&d_input, row_count * sizeof(uint64_t));
+            cudaMalloc(&d_output, selected_count * sizeof(uint64_t));
+            uint64_t *h_output_data = static_cast<uint64_t *>(malloc(selected_count * sizeof(uint64_t)));
 
-            cudaMemcpy(d_input, h_input_data, row_count * sizeof(int64_t), cudaMemcpyHostToDevice);
-            copySelectedRowsKernel<int64_t><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
+            cudaMemcpy(d_input, h_input_data, row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+            copySelectedRowsKernel<uint64_t><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
             cudaDeviceSynchronize();
-            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(int64_t), cudaMemcpyDeviceToHost);
+            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(uint64_t), cudaMemcpyDeviceToHost);
 
             filtered_table.data[col_idx] = h_output_data;
             cudaFree(d_input);

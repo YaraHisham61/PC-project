@@ -57,9 +57,14 @@ enum class DataType : __uint8_t
     }
 
     // Convert to time_t (seconds since epoch)
-    time_t timeValue = mktime(&valueTm); // Use timegm for UTC or mktime for local time
+    time_t timeValue = timegm(&valueTm); // Use timegm for UTC or mktime for local time
 
-    return static_cast<uint64_t>(timeValue);
+    return ((valueTm.tm_year + 1900) * 10000000000ULL) +
+           ((valueTm.tm_mon + 1) * 100000000ULL) +
+           (valueTm.tm_mday * 1000000ULL) +
+           (valueTm.tm_hour * 10000ULL) +
+           (valueTm.tm_min * 100ULL) +
+           valueTm.tm_sec;
 }
 
 [[nodiscard]] inline std::string getDateTimeStr(uint64_t seconds)

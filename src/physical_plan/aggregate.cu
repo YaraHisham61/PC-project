@@ -93,15 +93,198 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
 
         switch (aggregates[i].type)
         {
-            /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
-        case AggregateType::COUNT_STAR:
-            break;
+        /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
+        // case AggregateType::COUNT_STAR:
+        // {
+        //     switch (input.columns[0].type)
+        //     {
+        //     case DataType::FLOAT:
+        //     {
+        //         float *d_input = nullptr;
+        //         float *d_output = nullptr;
+        //         cudaMalloc(&d_input, input.row_count * sizeof(float));
+        //         cudaMalloc(&d_output, sizeof(float));
+        //         cudaMemset(d_output, 0, sizeof(float));
+
+        //         cudaMemcpy(d_input, input.data[0],
+        //                    input.row_count * sizeof(float), cudaMemcpyHostToDevice);
+
+        //         countStar<float><<<numBlocks, numThreads, shared_mem_size>>>(
+        //             d_input, d_output, input.row_count);
+        //         cudaDeviceSynchronize();
+
+        //         float count_value;
+        //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+        //         result.data[i] = new float(count_value);
+
+        //         cudaFree(d_input);
+        //         cudaFree(d_output);
+        //         break;
+        //     }
+        //     case DataType::DATETIME:
+        //     {
+        //         uint64_t *d_input = nullptr;
+        //         float *d_output = nullptr;
+        //         cudaMalloc(&d_input, input.row_count * sizeof(uint64_t));
+        //         cudaMalloc(&d_output, sizeof(float));
+        //         cudaMemset(d_output, 0, sizeof(float));
+
+        //         cudaMemcpy(d_input, input.data[0],
+        //                    input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+        //         countStar<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
+        //             d_input, d_output, input.row_count);
+        //         cudaDeviceSynchronize();
+
+        //         float count_value;
+        //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+        //         result.data[i] = new float(count_value);
+
+        //         cudaFree(d_input);
+        //         cudaFree(d_output);
+        //         break;
+        //     }
+        //     case DataType::STRING:
+        //     {
+        //         char **d_input = nullptr;
+        //         float *d_output = nullptr;
+        //         cudaMalloc(&d_input, input.row_count * sizeof(char *));
+        //         cudaMalloc(&d_output, sizeof(float));
+        //         cudaMemset(d_output, 0, sizeof(float));
+
+        //         // Only copy the pointers, not string contents
+        //         cudaMemcpy(d_input, input.data[0],
+        //                    input.row_count * sizeof(char *), cudaMemcpyHostToDevice);
+
+        //         countStar<char *><<<numBlocks, numThreads, shared_mem_size>>>(
+        //             d_input, d_output, input.row_count);
+        //         cudaDeviceSynchronize();
+
+        //         float count_value;
+        //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+        //         result.data[i] = new float(count_value);
+
+        //         cudaFree(d_input);
+        //         cudaFree(d_output);
+        //         break;
+        //     }
+        //     default:
+        //         break;
+        //     }
+        //     break;
+        // }
             /*COUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNT*/
         case AggregateType::COUNT:
-            break;
+        {
+            switch (input.columns[aggregates[i].column_index].type)
+            {
+            case DataType::FLOAT:
+            {
+                float *d_input_f = nullptr;
+                float *d_output_f = nullptr;
+                cudaMalloc(&d_input_f, input.row_count * sizeof(float));
+                cudaMalloc(&d_output_f, sizeof(float));
+                cudaMemset(d_output_f, 0, sizeof(float));
+
+                cudaMemcpy(d_input_f, input.data[aggregates[i].column_index],
+                           input.row_count * sizeof(float), cudaMemcpyHostToDevice);
+
+                countElements<float><<<numBlocks, numThreads, shared_mem_size>>>(
+                    d_input_f, d_output_f, input.row_count);
+                cudaDeviceSynchronize();
+
+                float count_value;
+                cudaMemcpy(&count_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
+                result.data[i] = new float(count_value);
+
+                cudaFree(d_input_f);
+                cudaFree(d_output_f);
+                break;
+            }
+            case DataType::DATETIME:
+            {
+                uint64_t *d_input_ui = nullptr;
+                float *d_output_f = nullptr;
+                cudaMalloc(&d_input_ui, input.row_count * sizeof(uint64_t));
+                cudaMalloc(&d_output_f, sizeof(float));
+                cudaMemset(d_output_f, 0, sizeof(float)); // Initialize output to 0
+
+                cudaMemcpy(d_input_ui, input.data[aggregates[i].column_index],
+                           input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
+                countElements<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
+                    d_input_ui, d_output_f, input.row_count);
+                cudaDeviceSynchronize();
+
+                float count_value;
+                cudaMemcpy(&count_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
+                result.data[i] = new float(count_value);
+
+                cudaFree(d_input_ui);
+                cudaFree(d_output_f);
+                break;
+            }
+            case DataType::STRING:
+            {
+                // Allocate device memory for string pointers and output
+                char **d_input = nullptr;
+                float *d_output = nullptr;
+                cudaMalloc(&d_input, input.row_count * sizeof(char *));
+                cudaMalloc(&d_output, sizeof(float));
+                cudaMemset(d_output, 0, sizeof(float));
+
+                // First copy the host pointers to a temporary array
+                char **host_pointers = new char *[input.row_count];
+                const char **input_column = static_cast<const char **>(input.data[aggregates[i].column_index]);
+
+                // Allocate device memory for each string and copy its content
+                for (size_t j = 0; j < input.row_count; j++)
+                {
+                    if (input_column[j] != nullptr)
+                    {
+                        size_t len = strlen(input_column[j]) + 1;
+                        cudaMalloc(&host_pointers[j], len);
+                        cudaMemcpy(host_pointers[j], input_column[j], len, cudaMemcpyHostToDevice);
+                    }
+                    else
+                    {
+                        host_pointers[j] = nullptr;
+                    }
+                }
+
+                // Copy the pointer array to device
+                cudaMemcpy(d_input, host_pointers, input.row_count * sizeof(char *), cudaMemcpyHostToDevice);
+
+                // Launch kernel
+                countElements<char *><<<numBlocks, numThreads, shared_mem_size>>>(
+                    d_input, d_output, input.row_count);
+
+                // Get result
+                float count_value;
+                cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
+                result.data[i] = new float(count_value);
+
+                // Cleanup
+                for (size_t j = 0; j < input.row_count; j++)
+                {
+                    if (host_pointers[j] != nullptr)
+                    {
+                        cudaFree(host_pointers[j]);
+                    }
+                }
+                delete[] host_pointers;
+                cudaFree(d_input);
+                cudaFree(d_output);
+                break;
+            }
+            default:
+                throw std::runtime_error("Unsupported data type for Count aggregate");
+            }
+        }
+        break;
             /*SUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUM*/
         case AggregateType::SUM:
-            if (input.columns[i].type == DataType::FLOAT)
+            if (input.columns[aggregates[i].column_index].type == DataType::FLOAT)
             {
                 float *h_input = static_cast<float *>(input.data[aggregates[i].column_index]);
 
@@ -128,7 +311,7 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
             break;
             /*AVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVG*/
         case AggregateType::AVG:
-            if (input.columns[i].type == DataType::FLOAT)
+            if (input.columns[aggregates[i].column_index].type == DataType::FLOAT)
             {
                 float *h_input = static_cast<float *>(input.data[aggregates[i].column_index]);
 
@@ -156,7 +339,7 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
             break;
             /*MINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMIN*/
         case AggregateType::MIN:
-            switch (input.columns[i].type)
+            switch (input.columns[aggregates[i].column_index].type)
             {
             case DataType::FLOAT:
             {
@@ -188,9 +371,15 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
             }
             case DataType::DATETIME:
             {
+
                 uint64_t *d_input_ui = nullptr, *d_output_ui = nullptr;
                 cudaMalloc(&d_input_ui, input.row_count * sizeof(uint64_t));
                 cudaMalloc(&d_output_ui, sizeof(uint64_t));
+
+                uint64_t init_val = UINT64_MAX;
+                std::cout << "init_val: " << init_val << std::endl;
+                cudaMemcpy(d_output_ui, &init_val, sizeof(float), cudaMemcpyHostToDevice);
+
                 cudaMemcpy(d_input_ui, input.data[aggregates[i].column_index],
                            input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
 
@@ -199,6 +388,7 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
 
                 uint64_t datetime_value;
                 cudaMemcpy(&datetime_value, d_output_ui, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+                std::cout << "MIN datetime value: " << datetime_value << std::endl;
                 result.data[i] = new uint64_t(datetime_value);
 
                 cudaFree(d_input_ui);
@@ -267,7 +457,7 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
             break;
         /* MAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAX*/
         case AggregateType::MAX:
-            switch (input.columns[i].type)
+            switch (input.columns[aggregates[i].column_index].type)
             {
             case DataType::FLOAT:
             {
@@ -405,20 +595,15 @@ DataType Aggregate::getOutputType(const AggregateFunction &agg, const TableResul
     switch (agg.type)
     {
     case AggregateType::COUNT_STAR:
-        return input.columns[agg.column_index].type;
+        return DataType::FLOAT;
     case AggregateType::COUNT:
-        return input.columns[agg.column_index].type;
-
-        return input.columns[agg.column_index].type;
+        return DataType::FLOAT;
     case AggregateType::SUM:
         return input.columns[agg.column_index].type;
-
     case AggregateType::AVG:
         return input.columns[agg.column_index].type;
-
     case AggregateType::MIN:
         return input.columns[agg.column_index].type;
-
     case AggregateType::MAX:
         return input.columns[agg.column_index].type;
     default:
@@ -427,119 +612,6 @@ DataType Aggregate::getOutputType(const AggregateFunction &agg, const TableResul
     }
     return DataType::FLOAT;
 }
-
-// // int64_t Aggregate::countNonNull(const TableResults &input, int col_idx) const
-// // {
-// //     int64_t count = 0;
-// //     for (size_t row = 0; row < input.row_count; ++row)
-// //     {
-// //         size_t idx = row * input.column_count + col_idx;
-// //         if (idx < input.rows.size() && !isNull(input.rows[idx]))
-// //         {
-// //             count++;
-// //         }
-// //     }
-// //     return count;
-// // }
-
-// // float Aggregate::computeSum(const TableResults &input, int col_idx) const
-// // {
-// //     double sum = 0;
-// //     for (size_t row = 0; row < input.row_count; ++row)
-// //     {
-// //         size_t idx = row * input.column_count + col_idx;
-// //         if (idx < input.rows.size() && !isNull(input.rows[idx]))
-// //         {
-// //             if (std::holds_alternative<float>(input.rows[idx]))
-// //             {
-// //                 sum += std::get<float>(input.rows[idx]);
-// //             }
-// //             else if (std::holds_alternative<int>(input.rows[idx]))
-// //             {
-// //                 sum += std::get<int>(input.rows[idx]);
-// //             }
-// //             else if (std::holds_alternative<int64_t>(input.rows[idx]))
-// //             {
-// //                 sum += std::get<int64_t>(input.rows[idx]);
-// //             }
-// //         }
-// //     }
-// //     return static_cast<float>(sum);
-// // }
-
-// // float Aggregate::computeAvg(const TableResults &input, int col_idx) const
-// // {
-// //     double sum = 0;
-// //     int64_t count = 0;
-// //     for (size_t row = 0; row < input.row_count; ++row)
-// //     {
-// //         size_t idx = row * input.column_count + col_idx;
-// //         if (idx < input.rows.size() && !isNull(input.rows[idx]))
-// //         {
-// //             if (std::holds_alternative<float>(input.rows[idx]))
-// //             {
-// //                 sum += std::get<float>(input.rows[idx]);
-// //                 count++;
-// //             }
-// //             else if (std::holds_alternative<int>(input.rows[idx]))
-// //             {
-// //                 sum += std::get<int>(input.rows[idx]);
-// //                 count++;
-// //             }
-// //             else if (std::holds_alternative<int64_t>(input.rows[idx]))
-// //             {
-// //                 sum += std::get<int64_t>(input.rows[idx]);
-// //                 count++;
-// //             }
-// //         }
-// //     }
-// //     return count > 0 ? static_cast<float>(sum / count) : 0.0f;
-// // }
-
-// // ValueVariant Aggregate::findMin(const TableResults &input, int col_idx) const
-// // {
-// //     ValueVariant min_val;
-// //     bool has_value = false;
-
-// //     for (size_t row = 0; row < input.row_count; ++row)
-// //     {
-// //         size_t idx = row * input.column_count + col_idx;
-// //         if (idx >= input.rows.size() || isNull(input.rows[idx]))
-// //             continue;
-
-// //         const auto &val = input.rows[idx];
-// //         if (!has_value)
-// //         {
-// //             min_val = val;
-// //             has_value = true;
-// //         }
-// //         else
-// //         {
-// //             if (val < min_val)
-// //             {
-// //                 min_val = val;
-// //             }
-// //         }
-// //     }
-
-// //     if (!has_value)
-// //     {
-// //         // Return default value based on column type
-// //         DataType type = input.columns[col_idx].type;
-// //         switch (type)
-// //         {
-// //         case DataType::FLOAT:
-// //             return 0.0f;
-// //         case DataType::INT:
-// //             return 0;
-// //         case DataType::STRING:
-// //             return std::string();
-// //         default:
-// //             return 0.0f;
-// //         }
-// //     }
-// //     return min_val;
-// // }
 
 void Aggregate::print() const
 {

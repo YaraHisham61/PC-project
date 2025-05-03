@@ -84,7 +84,7 @@ public:
                 }
                 else if (columns[col].type == DataType::DATETIME)
                 {
-                    std::cout << static_cast<int64_t *>(data[col])[row] << "\t";
+                    std::cout << static_cast<uint64_t *>(data[col])[row] << "\t";
                 }
                 else if (columns[col].type == DataType::STRING)
                 {

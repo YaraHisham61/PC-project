@@ -100,10 +100,6 @@ __global__ void findMinElement(T *input, T *output, int size)
     {
         local_min = FLT_MAX;
     }
-    else if constexpr (std::is_same<T, int>::value)
-    {
-        local_min = INT_MAX;
-    }
     else if constexpr (std::is_same<T, uint64_t>::value)
     {
         local_min = UINT64_MAX;
@@ -121,7 +117,7 @@ __global__ void findMinElement(T *input, T *output, int size)
     {
         T neighbor = __shfl_down_sync(active_mask, local_min, offset);
         if (tid + offset < size)
-        { 
+        {
             local_min = min(local_min, neighbor);
         }
     }
@@ -147,7 +143,6 @@ __global__ void findMinElement(T *input, T *output, int size)
             {
                 local_min = min(local_min, neighbor);
             }
-    
         }
 
         if (lane_id == 0)

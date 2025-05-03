@@ -71,8 +71,8 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
                 memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(float));
                 break;
             case DataType::DATETIME:
-                result.data[col_idx] = static_cast<int64_t *>(malloc(result.row_count * sizeof(int64_t)));
-                memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(int64_t));
+                result.data[col_idx] = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
+                memcpy(result.data[col_idx], input_table.data[input_col_idx], result.row_count * sizeof(uint64_t));
                 break;
             case DataType::STRING:
                 result.data[col_idx] = static_cast<char **>(malloc(result.row_count * sizeof(char *)));
@@ -115,7 +115,7 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
                 break;
 
             case DataType::DATETIME:
-                result.data[col_idx] = static_cast<int64_t *>(malloc(result.row_count * sizeof(int64_t)));
+                result.data[col_idx] = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
                 result.data[col_idx] = input_table.data[input_index];
                 break;
             case DataType::STRING:

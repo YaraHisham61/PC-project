@@ -36,7 +36,7 @@ public:
     ~Aggregate() = default;
     std::string getAggregateName(const AggregateFunction &agg, const TableResults &input) const;
     DataType getOutputType(const AggregateFunction &agg, const TableResults &input) const;
-    int64_t countNonNull(const TableResults &input, int col_idx) const;
+    uint64_t countNonNull(const TableResults &input, int col_idx) const;
     // float computeSum(const TableResults &input, int col_idx) const;
     // float computeAvg(const TableResults &input, int col_idx) const;
     // ValueVariant findMin(const TableResults &input, int col_idx) const;

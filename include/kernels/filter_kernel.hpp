@@ -14,14 +14,7 @@ __device__ int device_strcmp(const char *s1, const char *s2);
 __global__ void andKernel(bool *combined_mask, const bool *current_mask, size_t size);
 __global__ void orKernel(bool *combined_mask, const bool *current_mask, size_t size);
 
-// template <typename T>
-// __global__ void filterColumnKernel(const T *input, T *output, const bool *mask, const size_t row_count, unsigned long long *filtered_count);
-
-// __global__ void filterStringColumnKernel(const char **input, char **output, const bool *mask, const size_t row_count, unsigned long long *filtered_count);
-
-// First kernel: Compute exclusive prefix sum of the mask
 __global__ void computeOutputPositions(const bool *mask, unsigned int *positions, size_t size);
-
 
 template <typename T>
 __global__ void copySelectedRowsKernel(const T *input, T *output,

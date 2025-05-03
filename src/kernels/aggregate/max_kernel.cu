@@ -92,10 +92,7 @@ __global__ void findMaxElement(T *input, T *output, int size)
     {
         local_max = -FLT_MAX;
     }
-    else if constexpr (std::is_same<T, int>::value)
-    {
-        local_max = INT_MIN;
-    }
+
     else if constexpr (std::is_same<T, uint64_t>::value)
     {
         local_max = 0; // Minimum for unsigned is 0

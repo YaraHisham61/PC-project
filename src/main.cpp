@@ -63,7 +63,9 @@ int main()
     // std::string query = "SELECT * FROM Student WHERE year >2019 or id = 500; ";
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT max(id),max(year),count(name),count(name) FROM Student;";
-    std::string query = "SELECT * FROM table_1";
+    // std::string query = "SELECT * FROM  table_4 t4 , table_1 t1 WHERE t4.last_modified= t1.completion_date ;";
+    std::string query = "SELECT * FROM  Student t4 , Addresses t1 WHERE t4.name= t1.address ;";
+
     // std::string query = "SELECT id,year,name,name FROM Student;";
     profiler.start("Get Logical Plan");
     auto logical_plan = duckdb_interface.getLogicalPlan(query);
@@ -91,10 +93,6 @@ int main()
     // root_node.buildPlanTree(&(physical_plan.get()->Root()), &root_node);
     // std::cout << "Physsical plan tree:\n";
     // plan_tree->print();
-
-    // std::vector<bool> result;
-    // GPUExecutor gpu_executor;
-    // cudaError_t status = gpu_executor.filterTable(r, 0, 100.0, 1, result);
 
     // if (status == cudaSuccess)
     // {

@@ -18,8 +18,8 @@ import pandas as pd
 # num_tables =  3
 
 # normal Config
-min_num_records = 1_000
-max_num_record = 1_001
+min_num_records = 1_0
+max_num_record = 1_1
 min_columns = 3
 max_columns = 5
 min_pk_columns = 1
@@ -27,22 +27,22 @@ max_pk_columns = 1
 folder_path = 'data'
 num_tables=  5
 
-max_fk_columns = 3
+max_fk_columns = 2
 seed = 42
 # Initialize Faker instance
 fake = Faker()
 
 # Column types and their possible names
-column_types = ['float', 'text', 'datetime']
+column_types = ['int', 'text', 'datetime']
 
 map_column_types = {
-    'float': '(N)',
+    'int': '(N)',
     'datetime': '(D)',
     'text': '(T)',
 }
 
 column_name_dict = {
-    'float': [
+    'int': [
         'price', 'amount', 'balance', 'total', 'cost', 'discount', 'tax', 'interest',
         'savings', 'inflation', 'revenue', 'investment', 'currency',
         'latitude', 'longitude', 'accuracy', 'score_percentage', 'rating_average',
@@ -74,8 +74,9 @@ flattened = [(column_type, column_name + f" {map_column_types[column_type]} ") f
 
 def generate_random_values(column_type):
     """Generate random data based on the column schema and any foreign key relationships."""
-    if column_type == 'float':
-        return round(random.uniform(1.0, max_num_record), 2)
+    if column_type == 'int':
+        return random.randint(1, max_num_record)
+        # return round(random.uniform(1.0, max_num_record), 2)
     elif column_type == 'text':
         return fake.text(max_nb_chars=250).replace('\n', '\\n')
     elif column_type == 'datetime':
@@ -85,6 +86,9 @@ def generate_random_values(column_type):
 
 def generate_unique_values(datatype, n):
     """Efficiently generate n unique values based on the specified datatype."""
+    if datatype == 'int':
+        return random.sample(range(1, 10 * n), n)  # sample guarantees uniqueness
+
     if datatype == 'float':
         values = set()
         while len(values) < n:
@@ -115,7 +119,7 @@ def generate_random_schema(prev_primary_keys: dict):
     for i in pk_col_idx:
         columns[i] = (columns[i][0], columns[i][1] + " (P)")
     # add default primary key
-    columns = [("float", "id (N) (P)")] + columns
+    columns = [("int", "id (N) (P)")] + columns
 
     # choose forigen keys randomly
     if len(prev_primary_keys) != 0:

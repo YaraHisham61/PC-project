@@ -13,6 +13,8 @@ class HashJoin : public PhysicalOpNode
 public:
     HashJoin(const duckdb::InsertionOrderPreservingMap<std::string> &params);
     ~HashJoin() override = default;
+    void getIndexOfSelectedRows(const TableResults &left_table, const TableResults &right_table,
+        std::vector<size_t> &left_indices, std::vector<size_t> &right_indices);
     TableResults executeJoin(const TableResults &left_table, const TableResults &right_table);
     void print() const override;
 };

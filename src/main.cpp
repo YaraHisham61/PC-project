@@ -58,20 +58,20 @@ int main()
     con.BeginTransaction();
     // Query to analyze
 
-    // std::string query = "SELECT s.name as dq FROM Student as s WHERE year > 2019";
+    std::string query = "SELECT id FROM table_1 order by id Desc;";
     // std::string query = "SELECT COUNT(name) FROM Student;";
     // std::string query = "SELECT * FROM Student WHERE year >2019 or id = 500; ";
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
-    // std::string query = "SELECT max(id),max(year),count(name),count(name) FROM Student;";
+    // std::string query = "SELECT max(id),count(id),min(id) FROM Student;";
     // std::string query = "SELECT * FROM  table_4 t4 , table_1 t1 WHERE t4.last_modified= t1.completion_date ;";
-    std::string query = "SELECT * FROM  Student t4 , Addresses t1 WHERE t4.name= t1.address ;";
+    // std::string query = "SELECT t1.address, t4.name, t4.id FROM  Student t4 , Addresses t1 WHERE t4.name= t1.address;";
 
     // std::string query = "SELECT id,year,name,name FROM Student;";
     profiler.start("Get Logical Plan");
     auto logical_plan = duckdb_interface.getLogicalPlan(query);
     profiler.stop("Get Logical Plan");
-    // std::cout << "Logical plan:\n"
-    //   << logical_plan->ToString() << std::endl;
+    std::cout << "Logical plan:\n"
+              << logical_plan->ToString() << std::endl;
 
     profiler.start("Get Physical Plan");
     duckdb::PhysicalPlanGenerator physical_plan_generator(*con.context);
@@ -85,8 +85,8 @@ int main()
 
     // PhysicalOpNode root_node;
     TableResults *input_table = nullptr;
-    auto plan_tree = PhysicalOpNode::buildPlanTree(&(physical_plan.get()->Root()), &data_base, &input_table);
-    // printPhysicalPlan(&(physical_plan.get()->Root()));
+    // auto plan_tree = PhysicalOpNode::buildPlanTree(&(physical_plan.get()->Root()), &data_base, &input_table);
+    printPhysicalPlan(&(physical_plan.get()->Root()));
 
     // TableResults r = csv_importer.read_table(&data_base, "Student", {"name", "year"});
     // r.print();

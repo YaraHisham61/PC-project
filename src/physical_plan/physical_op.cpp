@@ -65,18 +65,18 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         }
 
         TableResults join_result = join_ptr->executeJoin(*left_table_ptr, *right_table_ptr);
+        join_result.print();
+        // delete left_table_ptr;
+        // delete right_table_ptr;
 
-        delete left_table_ptr;
-        delete right_table_ptr;
-
-        // if (*input_table_ptr)
-        // {
-        //     **input_table_ptr = std::move(join_result);
-        // }
-        // else
-        // {
-        //     *input_table_ptr = new TableResults(std::move(join_result));
-        // }
+        if (*input_table_ptr)
+        {
+            **input_table_ptr = std::move(join_result);
+        }
+        else
+        {
+            *input_table_ptr = new TableResults(std::move(join_result));
+        }
 
         return node;
     }
@@ -128,7 +128,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *proj_ptr = static_cast<Projection *>(node.get());
         TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
-        // projected_result.print();
+        projected_result.print();
         **input_table_ptr = std::move(projected_result);
     }
     else if (op_name == "UNGROUPED_AGGREGATE")

@@ -15,12 +15,15 @@ HashJoin::HashJoin(const duckdb::InsertionOrderPreservingMap<std::string> &param
         std::cout << "col_table_right: " << col_table_right << std::endl;
     }
 }
-TableResults HashJoin::executeJoin(const TableResults &left_table, const TableResults &right_table)
+
+void HashJoin::getIndexOfSelectedRows(const TableResults &left_table, const TableResults &right_table,
+                                      std::vector<size_t> &left_indices, std::vector<size_t> &right_indices)
 {
+
     size_t index_left = left_table.getColumnIndex(col_table_left);
     size_t index_right = right_table.getColumnIndex(col_table_right);
     ColumnInfo left_col = left_table.columns[index_left];
-    ColumnInfo right_col = right_table.columns[index_left];
+    ColumnInfo right_col = right_table.columns[index_right];
 
     if (left_col.type != right_col.type)
     {
@@ -31,28 +34,33 @@ TableResults HashJoin::executeJoin(const TableResults &left_table, const TableRe
     int numBlocks = (left_table.row_count + numThreads - 1) / numThreads;
     size_t shared_mem_size = ((numThreads + 31) / 32) * getDataTypeNumBytes(left_col.type);
 
-    bool *h_output_mask_left = new bool[left_table.row_count]();
-    bool *h_output_mask_right = new bool[right_table.row_count]();
-    bool *d_output_mask_left = nullptr;
-    bool *d_output_mask_right = nullptr;
-    cudaMalloc(&d_output_mask_left, left_table.row_count * sizeof(bool));
-    cudaMalloc(&d_output_mask_right, right_table.row_count * sizeof(bool));
-    cudaMemset(d_output_mask_left, 0, left_table.row_count * sizeof(bool));
-    cudaMemset(d_output_mask_right, 0, right_table.row_count * sizeof(bool));
+    size_t row_count_left = left_table.row_count,
+           row_count_right = right_table.row_count;
+    size_t max_pairs = row_count_left * row_count_right;
+
+    size_t *d_left_idx = nullptr;
+    size_t *d_right_idx = nullptr;
+    unsigned long long *d_count = nullptr;
+
+    cudaMalloc(&d_left_idx, max_pairs * sizeof(size_t));
+    cudaMalloc(&d_right_idx, max_pairs * sizeof(size_t));
+    cudaMalloc(&d_count, sizeof(unsigned long long));
+    cudaMemset(d_count, 0, sizeof(unsigned long long));
+
     if (left_col.type == DataType::FLOAT)
     {
         float *d_left_data = nullptr;
         float *d_right_data = nullptr;
-        cudaMalloc(&d_left_data, left_table.row_count * sizeof(float));
-        cudaMalloc(&d_right_data, right_table.row_count * sizeof(float));
-        cudaMemcpy(d_left_data, left_table.data[index_left], left_table.row_count * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(d_right_data, right_table.data[index_right], right_table.row_count * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMalloc(&d_left_data, row_count_left * sizeof(float));
+        cudaMalloc(&d_right_data, row_count_right * sizeof(float));
+        cudaMemcpy(d_left_data, left_table.data[index_left], row_count_left * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_right_data, right_table.data[index_right], row_count_right * sizeof(float), cudaMemcpyHostToDevice);
         size_t shared_mem_size2 = numThreads * sizeof(float);
 
         hashJoinKernel<float><<<numBlocks, numThreads, shared_mem_size2>>>(
             d_left_data, d_right_data,
-            d_output_mask_left, d_output_mask_right,
-            left_table.row_count, right_table.row_count);
+            row_count_left, row_count_right,
+            d_left_idx, d_right_idx, d_count);
         cudaDeviceSynchronize();
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess)
@@ -69,12 +77,14 @@ TableResults HashJoin::executeJoin(const TableResults &left_table, const TableRe
         uint64_t *d_right_data = nullptr;
         cudaMalloc(&d_left_data, left_table.row_count * sizeof(uint64_t));
         cudaMalloc(&d_right_data, right_table.row_count * sizeof(uint64_t));
+
         cudaMemcpy(d_left_data, left_table.data[index_left], left_table.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
         cudaMemcpy(d_right_data, right_table.data[index_right], right_table.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+
         hashJoinKernel<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
             d_left_data, d_right_data,
-            d_output_mask_left, d_output_mask_right,
-            left_table.row_count, right_table.row_count);
+            row_count_left, row_count_right,
+            d_left_idx, d_right_idx, d_count);
         cudaDeviceSynchronize();
         cudaFree(d_left_data);
         cudaFree(d_right_data);
@@ -109,8 +119,8 @@ TableResults HashJoin::executeJoin(const TableResults &left_table, const TableRe
         }
         hashJoinKernel<const char *><<<numBlocks, numThreads, shared_mem_size>>>(
             d_left_data, d_right_data,
-            d_output_mask_left, d_output_mask_right,
-            left_table.row_count, right_table.row_count);
+            row_count_left, row_count_right,
+            d_left_idx, d_right_idx, d_count);
         cudaDeviceSynchronize();
         for (size_t i = 0; i < left_table.row_count; i++)
         {
@@ -129,28 +139,206 @@ TableResults HashJoin::executeJoin(const TableResults &left_table, const TableRe
     {
         throw std::runtime_error("Unsupported join column type");
     }
-    cudaMemcpy(h_output_mask_left, d_output_mask_left, left_table.row_count * sizeof(bool), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_output_mask_right, d_output_mask_right, right_table.row_count * sizeof(bool), cudaMemcpyDeviceToHost);
-    int left = 0, right = 0;
-    for (size_t i = 0; i < left_table.row_count; i++)
+    cudaDeviceSynchronize();
+    unsigned long long h_count = 0;
+    cudaMemcpy(&h_count, d_count, sizeof(unsigned long long), cudaMemcpyDeviceToHost);
+
+    left_indices.resize(h_count); 
+    right_indices.resize(h_count);
+
+    cudaMemcpy(left_indices.data(), d_left_idx, h_count * sizeof(size_t),
+               cudaMemcpyDeviceToHost);
+    cudaFree(d_left_idx);
+
+    cudaMemcpy(right_indices.data(), d_right_idx, h_count * sizeof(size_t),
+               cudaMemcpyDeviceToHost);
+    cudaFree(d_right_idx);
+    cudaFree(d_count);
+}
+TableResults HashJoin::executeJoin(const TableResults &left_table, const TableResults &right_table)
+{
+    std::vector<size_t> left_indices(left_table.row_count);
+    std::vector<size_t> right_indices(right_table.row_count);
+    getIndexOfSelectedRows(left_table, right_table, left_indices, right_indices);
+
+    TableResults result;
+    result.column_count = left_table.columns.size() + right_table.columns.size();
+    result.row_count = left_indices.size();
+    result.columns = left_table.columns;
+    result.columns.insert(result.columns.end(), right_table.columns.begin(), right_table.columns.end());
+    result.data.resize(left_table.columns.size() + right_table.columns.size());
+
+    for (size_t i = 0; i < result.columns.size(); ++i)
     {
-        if (h_output_mask_left[i])
-        {
-            left++;
-        }
+        result.columns[i].idx = i;
     }
-    for (size_t i = 0; i < right_table.row_count; i++)
+
+    size_t *d_left_idx = nullptr;
+    size_t *d_right_idx = nullptr;
+    cudaMalloc(&d_left_idx, result.row_count * sizeof(size_t));
+    cudaMalloc(&d_right_idx, result.row_count * sizeof(size_t));
+    cudaMemcpy(d_left_idx, left_indices.data(), result.row_count * sizeof(size_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_right_idx, right_indices.data(), result.row_count * sizeof(size_t), cudaMemcpyHostToDevice);
+
+    int numThreads = 256;
+    int numBlocks = (result.row_count + numThreads - 1) / numThreads;
+
+    size_t col_idx = 0;
+    for (size_t i = 0; i < left_table.columns.size(); ++i)
     {
-        if (h_output_mask_right[i])
+
+        switch (left_table.columns[i].type)
         {
-            right++;
+        case DataType::FLOAT:
+        {
+            float *d_input, *d_output;
+            cudaMalloc(&d_input, left_table.row_count * sizeof(float));
+            cudaMalloc(&d_output, result.row_count * sizeof(float));
+            cudaMemcpy(d_input, left_table.data[i], left_table.row_count * sizeof(float), cudaMemcpyHostToDevice);
+            getRowsKernel<float><<<numBlocks, numThreads>>>(
+                d_input,
+                d_left_idx,
+                d_output,
+                result.row_count);
+            cudaDeviceSynchronize();
+            float *h_output_data = static_cast<float *>(malloc(result.row_count * sizeof(float)));
+            cudaMemcpy(h_output_data, d_output, result.row_count * sizeof(float), cudaMemcpyDeviceToHost);
+            // for (size_t j = 0; j < result.row_count; ++j)
+            // {
+            //     std::cout << "h_output_data[" << j << "] = " << h_output_data[j] << std::endl;
+            // }
+            result.data[col_idx] = h_output_data;
+            cudaFree(d_input);
+            cudaFree(d_output);
+            break;
         }
+        case DataType::DATETIME:
+        {
+            uint64_t *d_input, *d_output;
+            cudaMalloc(&d_input, left_table.row_count * sizeof(uint64_t));
+            cudaMalloc(&d_output, result.row_count * sizeof(uint64_t));
+            cudaMemcpy(d_input, left_table.data[i], left_table.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+            getRowsKernel<uint64_t><<<numBlocks, numThreads>>>(
+                d_input,
+                d_left_idx,
+                d_output,
+                result.row_count);
+            cudaDeviceSynchronize();
+            uint64_t *h_output_data = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
+            cudaMemcpy(h_output_data, d_output, result.row_count * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+            result.data[col_idx] = h_output_data;
+            cudaFree(d_input);
+            cudaFree(d_output);
+            break;
+        }
+        case DataType::STRING:
+        {
+            const char **h_input_strings = static_cast<const char **>(left_table.data[i]);
+            const char **h_output_strings = static_cast<const char **>(malloc(result.row_count * sizeof(char *)));
+
+            const char **d_input_strings;
+            cudaMalloc(&d_input_strings, left_table.row_count * sizeof(char *));
+            cudaMemcpy(d_input_strings, h_input_strings, left_table.row_count * sizeof(char *), cudaMemcpyHostToDevice);
+
+            const char **d_output_strings;
+            cudaMalloc(&d_output_strings, result.row_count * sizeof(char *));
+            getRowsKernel<const char *><<<numBlocks, numThreads>>>(
+                d_input_strings,
+                d_left_idx,
+                d_output_strings,
+                result.row_count);
+
+            cudaDeviceSynchronize();
+
+            cudaMemcpy(h_output_strings, d_output_strings, result.row_count * sizeof(char *), cudaMemcpyDeviceToHost);
+
+            result.data[col_idx] = h_output_strings;
+            cudaFree(d_input_strings);
+            cudaFree(d_output_strings);
+            break;
+        }
+        default:
+            break;
+        }
+        col_idx++;
     }
-    std::cout << "Left matches: " << left << std::endl;
-    std::cout << "Right matches: " << right << std::endl;
-    cudaFree(d_output_mask_left);
-    cudaFree(d_output_mask_right);
-    return TableResults();
+    for (size_t i = 0; i < right_table.columns.size(); ++i)
+    {
+        switch (right_table.columns[i].type)
+        {
+        case DataType::FLOAT:
+        {
+            float *d_input, *d_output;
+            cudaMalloc(&d_input, right_table.row_count * sizeof(float));
+            cudaMalloc(&d_output, result.row_count * sizeof(float));
+            cudaMemcpy(d_input, right_table.data[i], right_table.row_count * sizeof(float), cudaMemcpyHostToDevice);
+            getRowsKernel<float><<<numBlocks, numThreads>>>(
+                d_input,
+                d_right_idx,
+                d_output,
+                result.row_count);
+            cudaDeviceSynchronize();
+            float *h_output_data = static_cast<float *>(malloc(result.row_count * sizeof(float)));
+            cudaMemcpy(h_output_data, d_output, result.row_count * sizeof(float), cudaMemcpyDeviceToHost);
+            result.data[col_idx] = h_output_data;
+            cudaFree(d_input);
+            cudaFree(d_output);
+            break;
+        }
+        case DataType::DATETIME:
+        {
+            uint64_t *d_input, *d_output;
+            cudaMalloc(&d_input, right_table.row_count * sizeof(uint64_t));
+            cudaMalloc(&d_output, result.row_count * sizeof(uint64_t));
+            cudaMemcpy(d_input, right_table.data[i], right_table.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+            getRowsKernel<uint64_t><<<numBlocks, numThreads>>>(
+                d_input,
+                d_right_idx,
+                d_output,
+                result.row_count);
+
+            cudaDeviceSynchronize();
+            uint64_t *h_output_data = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
+            cudaMemcpy(h_output_data, d_output, result.row_count * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+            result.data[col_idx] = h_output_data;
+            cudaFree(d_input);
+            cudaFree(d_output);
+            break;
+        }
+        case DataType::STRING:
+        {
+            const char **h_input_strings = static_cast<const char **>(right_table.data[i]);
+            const char **h_output_strings = static_cast<const char **>(malloc(result.row_count * sizeof(char *)));
+
+            const char **d_input_strings;
+            cudaMalloc(&d_input_strings, right_table.row_count * sizeof(char *));
+            cudaMemcpy(d_input_strings, h_input_strings, right_table.row_count * sizeof(char *), cudaMemcpyHostToDevice);
+
+            const char **d_output_strings;
+            cudaMalloc(&d_output_strings, result.row_count * sizeof(char *));
+            getRowsKernel<const char *><<<numBlocks, numThreads>>>(
+                d_input_strings,
+                d_right_idx,
+                d_output_strings,
+                result.row_count);
+
+            cudaDeviceSynchronize();
+
+            cudaMemcpy(h_output_strings, d_output_strings, result.row_count * sizeof(char *), cudaMemcpyDeviceToHost);
+
+            result.data[col_idx] = h_output_strings;
+            cudaFree(d_input_strings);
+            cudaFree(d_output_strings);
+            break;
+        }
+        default:
+            break;
+        }
+        col_idx++;
+    }
+    cudaFree(d_left_idx);
+    cudaFree(d_right_idx);
+    return result;
 }
 
 void HashJoin::print() const

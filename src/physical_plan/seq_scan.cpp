@@ -42,17 +42,36 @@ void SeqScan::print() const
     }
 }
 
-TableResults SeqScan::read_scan_table(DB *data_base)
+TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t batch_size)
 {
     TableResults result;
+    result.batch_index = batch_index;
+
+    // Load CSV file
     std::string csv_file = DATA_DIR + this->table_name + ".csv";
     rapidcsv::Document doc(csv_file);
     std::vector<std::string> cols_to_read = this->projections;
 
+    // Calculate row range for the current batch
+    size_t total_rows = doc.GetRowCount();
+    size_t start_row = batch_index * batch_size;
+    if (start_row > total_rows)
+    {
+        result.row_count = 0;
+        result.has_more = false; // No more batches to read
+        return result;
+    }
+    size_t end_row = std::min(start_row + batch_size, total_rows);
+    result.row_count = end_row - start_row;
+    result.has_more = (end_row < total_rows);
+
+    // If no projections specified, read all columns
     if (cols_to_read.empty())
     {
         cols_to_read = data_base->get_table(table_name)->getColumnNames();
     }
+
+    // Set up column metadata
     int idx = 0;
     for (const auto &col_name : cols_to_read)
     {
@@ -66,9 +85,18 @@ TableResults SeqScan::read_scan_table(DB *data_base)
         result.columns.push_back(*c);
     }
     result.column_count = result.columns.size();
-    result.row_count = doc.GetRowCount();
+
+  
+    if (result.row_count == 0)
+    {
+        result.has_more = false;
+        return result; // No rows to read
+    }
+
+    // Allocate memory for the batch
     result.data.resize(result.column_count);
 
+    // Read data for each column
     for (const auto &col : result.columns)
     {
         std::string col_name = get_original_column_name(&col, cols_to_read[col.idx]);
@@ -77,49 +105,49 @@ TableResults SeqScan::read_scan_table(DB *data_base)
         {
         case DataType::FLOAT:
             result.data[col.idx] = static_cast<float *>(malloc(result.row_count * sizeof(float)));
-            for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
+            for (size_t row_idx = start_row; row_idx < end_row; ++row_idx)
             {
                 try
                 {
                     float value = doc.GetCell<float>(col_name, row_idx);
-                    static_cast<float *>(result.data[col.idx])[row_idx] = value;
+                    static_cast<float *>(result.data[col.idx])[row_idx - start_row] = value;
                 }
                 catch (const std::exception &e)
                 {
                     // Use NaN for null float values
-                    static_cast<float *>(result.data[col.idx])[row_idx] = std::numeric_limits<float>::quiet_NaN();
+                    static_cast<float *>(result.data[col.idx])[row_idx - start_row] = std::numeric_limits<float>::quiet_NaN();
                 }
             }
             break;
 
         case DataType::DATETIME:
             result.data[col.idx] = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
-            for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
+            for (size_t row_idx = start_row; row_idx < end_row; ++row_idx)
             {
                 try
                 {
                     std::string date_str = doc.GetCell<std::string>(col_name, row_idx);
-                    static_cast<uint64_t *>(result.data[col.idx])[row_idx] = getDateTime(date_str);
+                    static_cast<uint64_t *>(result.data[col.idx])[row_idx - start_row] = getDateTime(date_str);
                 }
                 catch (const std::exception &e)
                 {
-                    static_cast<uint64_t *>(result.data[col.idx])[row_idx] = 0;
+                    static_cast<uint64_t *>(result.data[col.idx])[row_idx - start_row] = 0;
                 }
             }
             break;
 
         case DataType::STRING:
             result.data[col.idx] = static_cast<char **>(malloc(result.row_count * sizeof(char *)));
-            for (size_t row_idx = 0; row_idx < result.row_count; ++row_idx)
+            for (size_t row_idx = start_row; row_idx < end_row; ++row_idx)
             {
                 try
                 {
                     std::string str_value = doc.GetCell<std::string>(col_name, row_idx);
-                    static_cast<char **>(result.data[col.idx])[row_idx] = strdup(str_value.c_str());
+                    static_cast<char **>(result.data[col.idx])[row_idx - start_row] = strdup(str_value.c_str());
                 }
                 catch (const std::exception &e)
                 {
-                    static_cast<char **>(result.data[col.idx])[row_idx] = nullptr;
+                    static_cast<char **>(result.data[col.idx])[row_idx - start_row] = nullptr;
                 }
             }
             break;

@@ -38,10 +38,12 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
 {
     TableResults result;
     auto modified_names = this->output_names;
+    result.batch_index = input_table.batch_index;
 
     if (input_table.column_count == 0 || input_table.row_count == 0)
     {
-        return result;
+        
+        return input_table;
     }
 
     if (flag)
@@ -57,6 +59,8 @@ TableResults Projection::applyProjection(const TableResults &input_table) const
 
         result.column_count = projections_index.size();
         result.row_count = input_table.row_count;
+        result.batch_index = input_table.batch_index;
+        result.has_more = input_table.has_more;
         result.data.resize(result.column_count);
 
         for (size_t col_idx = 0; col_idx < result.columns.size(); ++col_idx)

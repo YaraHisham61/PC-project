@@ -5,10 +5,12 @@
 #include "physical_plan/join.hpp"
 #include "physical_plan/aggregate.hpp"
 #include "physical_plan/order_by.hpp"
+
 std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
     DB *data_base,
-    TableResults **input_table_ptr)
+    TableResults **input_table_ptr,
+    size_t batch_index, size_t batch_size)
 {
     if (!op)
     {
@@ -51,11 +53,11 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         auto *join_ptr = static_cast<HashJoin *>(node.get());
 
         TableResults *left_table_ptr = nullptr;
-        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr);
+        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size);
 
         // Process right child
         TableResults *right_table_ptr = nullptr;
-        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr);
+        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index, batch_size);
 
         if (left_child)
             node->children.push_back(std::move(left_child));
@@ -86,7 +88,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     }
     for (auto &child : op->children)
     {
-        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr);
+        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size);
         if (child_node && !child_node->params.empty())
         {
             node->children.push_back(std::move(child_node));
@@ -97,7 +99,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     if (op_name == "SEQ_SCAN")
     {
         auto *seq_ptr = static_cast<SeqScan *>(node.get());
-        TableResults scan_result = seq_ptr->read_scan_table(data_base);
+        TableResults scan_result = seq_ptr->read_scan_table(data_base, batch_index, batch_size);
         // scan_result.print();
         if (*input_table_ptr)
         {
@@ -150,9 +152,77 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *aggr_ptr = static_cast<Aggregate *>(node.get());
         TableResults aggregate_result = aggr_ptr->computeAggregates(**input_table_ptr);
-        aggregate_result.print();
+        // aggregate_result.print();
         **input_table_ptr = std::move(aggregate_result);
     }
 
     return node;
+}
+void PhysicalOpNode::executePlanInBatches(
+    duckdb::PhysicalOperator *op, DB *data_base, size_t batch_size = 1000)
+{
+    TableResults *current_batch = nullptr;
+    size_t batch_index = 0;
+    bool is_aggregate = (op->GetName() == "UNGROUPED_AGGREGATE");
+    // bool is_order_by = (op->GetName() == "ORDER_BY");
+    // std::vector<TableResults> order_by_batches; // For OrderBy merging
+
+    std::unique_ptr<Aggregate> aggregate_op;
+    // std::unique_ptr<OrderBy> order_by_op;
+    if (is_aggregate)
+    {
+        aggregate_op = std::make_unique<Aggregate>(op->ParamsToString());
+    }
+    // else if (is_order_by)
+    // {
+    //     order_by_op = std::make_unique<OrderBy>(op->ParamsToString());
+    // }
+
+    while (true)
+    {
+        current_batch = nullptr;
+        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size);
+
+        if (!current_batch)
+        {
+            std::cerr << "Error: No result for batch " << batch_index << "\n";
+            break;
+        }
+
+        if (is_aggregate && current_batch->row_count != 0)
+        {
+            aggregate_op->updateAggregates(*current_batch);
+        }
+        // else if (is_order_by)
+        // {
+        //     order_by_batches.push_back(*current_batch);
+        // }
+        else
+        {
+            if (current_batch->row_count != 0)
+            {
+                current_batch->write_to_file();
+            }
+            // current_batch->print();
+        }
+
+        if (!current_batch->has_more)
+            break;
+        batch_index++;
+        current_batch->batch_index = batch_index;
+    }
+
+    if (is_aggregate)
+    {
+        aggregate_op->intermidiate_results->write_aggregate_to_file();
+        aggregate_op->intermidiate_results->print();
+    }
+    // else if (is_order_by)
+    // {
+    //     TableResults final_result = order_by_op->mergeBatches(order_by_batches);
+    //     final_result.write_to_file(output_filename, false);
+    //     final_result.print();
+    // }
+
+    delete current_batch;
 }

@@ -5,6 +5,7 @@
 #include "kernels/order_by.hpp"
 #include <cuda_runtime.h>
 #include <sstream>
+#include "kernels/hash_join.hpp"
 
 class OrderBy : public PhysicalOpNode
 {
@@ -15,6 +16,7 @@ class OrderBy : public PhysicalOpNode
 public:
     OrderBy(const duckdb::InsertionOrderPreservingMap<std::string> &params);
     ~OrderBy() override = default;
+    std::vector<size_t> getSortedIndex(const TableResults &input_table);
     TableResults executeOrderBy(const TableResults &input_table);
     void print() const override;
 };

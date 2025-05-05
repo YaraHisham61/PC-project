@@ -46,6 +46,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     {
         node = std::make_unique<OrderBy>(params);
     }
+
     if (op_name == "HASH_JOIN")
     {
         auto *join_ptr = static_cast<HashJoin *>(node.get());
@@ -153,6 +154,21 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         aggregate_result.print();
         **input_table_ptr = std::move(aggregate_result);
     }
+
+    else if (op_name == "ORDER_BY")
+    {
+        if (!*input_table_ptr)
+        {
+            std::cerr << "Error: No input table to project\n";
+            return nullptr;
+        }
+
+        auto *order_ptr = static_cast<OrderBy *>(node.get());
+        TableResults ordered_result = order_ptr->executeOrderBy(**input_table_ptr);
+        ordered_result.print();
+        **input_table_ptr = std::move(ordered_result);
+    }
+    
 
     return node;
 }

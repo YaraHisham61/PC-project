@@ -97,12 +97,12 @@ int main()
     // }
     // result->Print();
 
-
     // printPhysicalPlan(&(physical_plan.get()->Root()), 2);
 
     // PhysicalOpNode root_node;
     TableResults *input_table = nullptr;
-    auto plan_tree = PhysicalOpNode::buildPlanTree(&(physical_plan.get()->Root()), &data_base, &input_table);
+    // auto plan_tree = PhysicalOpNode::buildPlanTree(&(physical_plan.get()->Root()), &data_base, &input_table);
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 10);
     // printPhysicalPlan(&(physical_plan.get()->Root()));
 
     // TableResults r = csv_importer.read_table(&data_base, "Student", {"name", "year"});

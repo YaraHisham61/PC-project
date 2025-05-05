@@ -272,6 +272,10 @@ bool *Filter::getSelectedRows(const TableResults &input_table) const
 
 TableResults Filter::applyFilter(const TableResults &input_table) const
 {
+    if (input_table.row_count == 0)
+    {
+        return input_table;
+    }
     bool *h_selected_rows = getSelectedRows(input_table);
 
     size_t selected_count = 0;
@@ -287,6 +291,7 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
     filtered_table.column_count = input_table.column_count;
     filtered_table.columns = input_table.columns;
     filtered_table.row_count = selected_count;
+    filtered_table.batch_index = input_table.batch_index;
     filtered_table.data.resize(input_table.column_count);
 
     bool *d_mask;

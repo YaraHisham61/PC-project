@@ -74,10 +74,14 @@ AggregateFunction Aggregate::parseSingleAggregate(const std::string &agg_str) co
 
 TableResults Aggregate::computeAggregates(const TableResults &input) const
 {
+    if (input.row_count == 0)
+    {
+        return input;
+    }
     TableResults result;
     result.row_count = 1;
     result.column_count = this->aggregates.size();
-    result.data.resize(input.column_count);
+    result.data.resize(result.column_count);
 
     int numThreads = 256;
     int numBlocks = (input.row_count + numThreads - 1) / numThreads;
@@ -93,86 +97,13 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
 
         switch (aggregates[i].type)
         {
-            /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
-            // case AggregateType::COUNT_STAR:
-            // {
-            //     switch (input.columns[0].type)
-            //     {
-            //     case DataType::FLOAT:
-            //     {
-            //         float *d_input = nullptr;
-            //         float *d_output = nullptr;
-            //         cudaMalloc(&d_input, input.row_count * sizeof(float));
-            //         cudaMalloc(&d_output, sizeof(float));
-            //         cudaMemset(d_output, 0, sizeof(float));
+        /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
+        case AggregateType::COUNT_STAR:
+        {
+            result.data[i] = new float(input.row_count);
+            break;
+        }
 
-            //         cudaMemcpy(d_input, input.data[0],
-            //                    input.row_count * sizeof(float), cudaMemcpyHostToDevice);
-
-            //         countStar<float><<<numBlocks, numThreads, shared_mem_size>>>(
-            //             d_input, d_output, input.row_count);
-            //         cudaDeviceSynchronize();
-
-            //         float count_value;
-            //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-            //         result.data[i] = new float(count_value);
-
-            //         cudaFree(d_input);
-            //         cudaFree(d_output);
-            //         break;
-            //     }
-            //     case DataType::DATETIME:
-            //     {
-            //         uint64_t *d_input = nullptr;
-            //         float *d_output = nullptr;
-            //         cudaMalloc(&d_input, input.row_count * sizeof(uint64_t));
-            //         cudaMalloc(&d_output, sizeof(float));
-            //         cudaMemset(d_output, 0, sizeof(float));
-
-            //         cudaMemcpy(d_input, input.data[0],
-            //                    input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-            //         countStar<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
-            //             d_input, d_output, input.row_count);
-            //         cudaDeviceSynchronize();
-
-            //         float count_value;
-            //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-            //         result.data[i] = new float(count_value);
-
-            //         cudaFree(d_input);
-            //         cudaFree(d_output);
-            //         break;
-            //     }
-            //     case DataType::STRING:
-            //     {
-            //         char **d_input = nullptr;
-            //         float *d_output = nullptr;
-            //         cudaMalloc(&d_input, input.row_count * sizeof(char *));
-            //         cudaMalloc(&d_output, sizeof(float));
-            //         cudaMemset(d_output, 0, sizeof(float));
-
-            //         // Only copy the pointers, not string contents
-            //         cudaMemcpy(d_input, input.data[0],
-            //                    input.row_count * sizeof(char *), cudaMemcpyHostToDevice);
-
-            //         countStar<char *><<<numBlocks, numThreads, shared_mem_size>>>(
-            //             d_input, d_output, input.row_count);
-            //         cudaDeviceSynchronize();
-
-            //         float count_value;
-            //         cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-            //         result.data[i] = new float(count_value);
-
-            //         cudaFree(d_input);
-            //         cudaFree(d_output);
-            //         break;
-            //     }
-            //     default:
-            //         break;
-            //     }
-            //     break;
-            // }
             /*COUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNT*/
         case AggregateType::COUNT:
         {
@@ -611,6 +542,150 @@ DataType Aggregate::getOutputType(const AggregateFunction &agg, const TableResul
         break;
     }
     return DataType::FLOAT;
+}
+
+void Aggregate::updateAggregates(const TableResults &input)
+{
+    if (!this->intermidiate_results)
+    {
+        this->intermidiate_results = new TableResults(input);
+        return;
+    }
+    // Update the intermediate results with the new input
+    for (size_t i = 0; i < aggregates.size(); ++i)
+    {
+        switch (aggregates[i].type)
+        {
+        case AggregateType::COUNT_STAR:
+        case AggregateType::COUNT:
+        {
+            float h_input = static_cast<float *>(input.data[i])[0];
+            float h_intermediate = static_cast<float *>((this->intermidiate_results)->data[i])[0];
+            static_cast<float *>((this->intermidiate_results)->data[i])[0] = h_intermediate + h_input;
+            break;
+        }
+        case AggregateType::SUM:
+        {
+            switch (input.columns[aggregates[i].column_index].type)
+            {
+            case DataType::FLOAT:
+            {
+                float h_input_sum = static_cast<float *>(input.data[aggregates[i].column_index])[0];
+                float h_intermediate_sum = static_cast<float *>((this->intermidiate_results)->data[i])[0];
+                static_cast<float *>((this->intermidiate_results)->data[i])[0] = h_intermediate_sum + h_input_sum;
+                break;
+            }
+            case DataType::DATETIME:
+            {
+                uint64_t h_input_datetime = static_cast<uint64_t *>(input.data[aggregates[i].column_index])[0];
+                uint64_t h_intermediate_datetime = static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0];
+                h_intermediate_datetime += h_input_datetime;
+                static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0] = h_intermediate_datetime;
+                break;
+            }
+            }
+            break;
+        }
+
+        case AggregateType::AVG:
+        {
+            switch (input.columns[aggregates[i].column_index].type)
+            {
+            case DataType::FLOAT:
+            {
+                float h_input_avg = static_cast<float *>(input.data[aggregates[i].column_index])[0];
+                float h_intermediate_avg = static_cast<float *>((this->intermidiate_results)->data[i])[0];
+                h_intermediate_avg += h_input_avg;
+                static_cast<float *>((this->intermidiate_results)->data[i])[0] = h_intermediate_avg;
+                break;
+            }
+            case DataType::DATETIME:
+            {
+                uint64_t h_input_avg_datetime = static_cast<uint64_t *>(input.data[aggregates[i].column_index])[0];
+                uint64_t h_intermediate_avg_datetime = static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0];
+                h_intermediate_avg_datetime += h_input_avg_datetime;
+                static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0] = h_intermediate_avg_datetime;
+                break;
+            }
+            }
+            break;
+        }
+        case AggregateType::MIN:
+        {
+            switch (input.columns[aggregates[i].column_index].type)
+            {
+            case DataType::FLOAT:
+            {
+                float h_input_min = static_cast<float *>(input.data[aggregates[i].column_index])[0];
+                float h_intermediate_min = static_cast<float *>((this->intermidiate_results)->data[i])[0];
+                if (h_input_min < h_intermediate_min)
+                {
+                    static_cast<float *>((this->intermidiate_results)->data[i])[0] = h_input_min;
+                }
+                break;
+            }
+            case DataType::DATETIME:
+            {
+                uint64_t h_input_min_datetime = static_cast<uint64_t *>(input.data[aggregates[i].column_index])[0];
+                uint64_t h_intermediate_min_datetime = static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0];
+                if (h_input_min_datetime < h_intermediate_min_datetime)
+                {
+                    static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0] = h_input_min_datetime;
+                }
+                break;
+            }
+            case DataType::STRING:
+            {
+                char *h_input_min_string = static_cast<char **>(input.data[aggregates[i].column_index])[0];
+                char *h_intermediate_min_string = static_cast<char **>((this->intermidiate_results)->data[i])[0];
+                if (strcmp(h_input_min_string, h_intermediate_min_string) < 0)
+                {
+                    static_cast<char **>((this->intermidiate_results)->data[i])[0] = h_input_min_string;
+                }
+                break;
+            }
+            }
+            break;
+        }
+        case AggregateType::MAX:
+        {
+            switch (input.columns[aggregates[i].column_index].type)
+            {
+            case DataType::FLOAT:
+            {
+                float h_input_max = static_cast<float *>(input.data[aggregates[i].column_index])[0];
+                float h_intermediate_max = static_cast<float *>((this->intermidiate_results)->data[i])[0];
+                if (h_input_max > h_intermediate_max)
+                {
+                    static_cast<float *>((this->intermidiate_results)->data[i])[0] = h_input_max;
+                }
+                break;
+            }
+            case DataType::DATETIME:
+            {
+                uint64_t h_input_max_datetime = static_cast<uint64_t *>(input.data[aggregates[i].column_index])[0];
+                uint64_t h_intermediate_max_datetime = static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0];
+                if (h_input_max_datetime > h_intermediate_max_datetime)
+                {
+                    static_cast<uint64_t *>((this->intermidiate_results)->data[i])[0] = h_input_max_datetime;
+                }
+                break;
+            }
+            case DataType::STRING:
+            {
+                char *h_input_max_string = static_cast<char **>(input.data[aggregates[i].column_index])[0];
+                char *h_intermediate_max_string = static_cast<char **>((this->intermidiate_results)->data[i])[0];
+                if (strcmp(h_input_max_string, h_intermediate_max_string) > 0)
+                {
+                    static_cast<char **>((this->intermidiate_results)->data[i])[0] = h_input_max_string;
+                }
+                break;
+            }
+            }
+            break;
+        }
+        }
+    }
 }
 
 void Aggregate::print() const

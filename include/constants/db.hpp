@@ -169,7 +169,7 @@ public:
         }
 
         file.close();
-        std::cout << "Data appended to file: " << filename << "\n";
+        // std::cout << "Data appended to file: " << filename << "\n";
     }
     void write_aggregate_to_file()
     {

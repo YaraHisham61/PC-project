@@ -266,7 +266,7 @@ bool *Filter::getSelectedRows(const TableResults &input_table) const
             filtered_row_count++;
     }
 
-    std::cout << "Total rows matched: " << filtered_row_count << "\n";
+    // std::cout << "Total rows matched: " << filtered_row_count << "\n";
     return h_final_mask;
 }
 
@@ -285,7 +285,7 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
         if (h_selected_rows[i])
             selected_count++;
     }
-    std::cout << "DEBUG: Calculated selected_count = " << selected_count << std::endl;
+    // std::cout << "DEBUG: Calculated selected_count = " << selected_count << std::endl;
 
     TableResults filtered_table;
     filtered_table.column_count = input_table.column_count;

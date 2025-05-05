@@ -25,13 +25,13 @@ bool CSVImporter::import_folder(const std::string &folder_path, DB *data_base)
                 if (import_csv(entry.path(), data_base, table_name))
                 {
                     imported_count++;
-                    std::cout << "Imported " << entry.path().filename()
-                              << " as table '" << table_name << "'\n";
+                    // std::cout << "Imported " << entry.path().filename()
+                    //           << " as table '" << table_name << "'\n";
                 }
             }
         }
 
-        std::cout << "Successfully imported " << imported_count << " tables\n";
+        // std::cout << "Successfully imported " << imported_count << " tables\n";
         return imported_count > 0;
     }
     catch (const std::exception &e)

@@ -72,7 +72,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         }
 
         TableResults join_result = join_ptr->executeJoin(*left_table_ptr, *right_table_ptr);
-        join_result.print();
+        // join_result.print();
         // delete left_table_ptr;
         // delete right_table_ptr;
 
@@ -140,7 +140,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
                 return node;
         }
         TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
-        projected_result.print();
+        // projected_result.print();
         **input_table_ptr = std::move(projected_result);
     }
     else if (op_name == "UNGROUPED_AGGREGATE")
@@ -167,7 +167,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *order_ptr = static_cast<OrderBy *>(node.get());
         TableResults ordered_result = order_ptr->executeOrderBy(**input_table_ptr);
-        ordered_result.print();
+        // ordered_result.print();
         **input_table_ptr = std::move(ordered_result);
     }
     
@@ -231,7 +231,7 @@ void PhysicalOpNode::executePlanInBatches(
     if (is_aggregate)
     {
         aggregate_op->intermidiate_results->write_aggregate_to_file();
-        aggregate_op->intermidiate_results->print();
+        // aggregate_op->intermidiate_results->print();
     }
     // else if (is_order_by)
     // {

@@ -139,33 +139,6 @@ Condition Filter::parseSingleCondition(const std::string &cond_expr) const
     return cond;
 }
 
-enum class ConditionOp
-{
-    Greater = 1,
-    Less = 2,
-    Equal = 3,
-    NotEqual = 4,
-    LessEqual = 5,
-    GreaterEqual = 6
-};
-
-ConditionOp getConditionCode(const std::string &op)
-{
-    if (op == ">")
-        return ConditionOp::Greater;
-    if (op == "<")
-        return ConditionOp::Less;
-    if (op == "=")
-        return ConditionOp::Equal;
-    if (op == "!=")
-        return ConditionOp::NotEqual;
-    if (op == "<=")
-        return ConditionOp::LessEqual;
-    if (op == ">=")
-        return ConditionOp::GreaterEqual;
-    throw std::invalid_argument("Unsupported operator: " + op);
-}
-
 bool *Filter::getSelectedRows(const TableResults &input_table) const
 {
     const size_t row_count = input_table.row_count;
@@ -273,13 +246,7 @@ bool *Filter::getSelectedRows(const TableResults &input_table) const
         }
         bool *h_temp_mask = new bool[row_count];
         cudaMemcpy(h_temp_mask, d_temp_mask, row_count * sizeof(bool), cudaMemcpyDeviceToHost);
-        // for (size_t i = 0; i < row_count; i++)
-        // {
-        //     if (h_temp_mask[i])
-        //     {
-        //         std::cout << "Row " << i << " matches condition " << cond_idx << "\n";
-        //     }
-        // }
+
         cudaFree(d_temp_mask);
         cudaDeviceSynchronize();
     }

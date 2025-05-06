@@ -138,126 +138,163 @@ Condition Filter::parseSingleCondition(const std::string &cond_expr) const
     }
     return cond;
 }
+
+enum class ConditionOp
+{
+    Greater = 1,
+    Less = 2,
+    Equal = 3,
+    NotEqual = 4,
+    LessEqual = 5,
+    GreaterEqual = 6
+};
+
+ConditionOp getConditionCode(const std::string &op)
+{
+    if (op == ">")
+        return ConditionOp::Greater;
+    if (op == "<")
+        return ConditionOp::Less;
+    if (op == "=")
+        return ConditionOp::Equal;
+    if (op == "!=")
+        return ConditionOp::NotEqual;
+    if (op == "<=")
+        return ConditionOp::LessEqual;
+    if (op == ">=")
+        return ConditionOp::GreaterEqual;
+    throw std::invalid_argument("Unsupported operator: " + op);
+}
+
 bool *Filter::getSelectedRows(const TableResults &input_table) const
 {
     const size_t row_count = input_table.row_count;
-    bool *h_final_mask = new bool[row_count]();
+    std::unique_ptr<bool[], void (*)(bool *)> h_final_mask(
+        new bool[row_count](),
+        [](bool *ptr)
+        { delete[] ptr; });
+    std::vector<cudaStream_t> streams(conditions.size());
+    for (auto &stream : streams)
+    {
+        cudaStreamCreate(&stream);
+    }
+    cudaStream_t final_stream;
+    cudaStreamCreate(&final_stream);
 
     bool *d_combined_mask = nullptr;
     cudaMalloc(&d_combined_mask, row_count * sizeof(bool));
-    cudaMemset(d_combined_mask, 0, row_count * sizeof(bool));
+    cudaMemsetAsync(d_combined_mask, 0, row_count * sizeof(bool), final_stream);
 
     int numThreads = 256;
     int numBlocks = (row_count + numThreads - 1) / numThreads;
+    std::vector<bool *> d_temp_masks(conditions.size());
 
     for (size_t cond_idx = 0; cond_idx < this->conditions.size(); cond_idx++)
     {
+
+        bool *d_temp_mask = nullptr;
+        cudaMalloc(&d_temp_masks[cond_idx], row_count * sizeof(bool));
+        cudaMemsetAsync(&d_temp_masks[cond_idx], 0, row_count * sizeof(bool), streams[cond_idx]);
+
         const auto &cond = this->conditions[cond_idx];
         const size_t col_idx = input_table.getColumnIndex(cond.column);
         const DataType col_type = input_table.columns[col_idx].type;
+        ConditionOp cond_code = getConditionCode(cond.op);
 
-        uint8_t cond_code = 0;
-        if (cond.op == ">")
-            cond_code = 1;
-        else if (cond.op == "<")
-            cond_code = 2;
-        else if (cond.op == "=")
-            cond_code = 3;
-        else if (cond.op == "!=")
-            cond_code = 4;
-        else if (cond.op == "<=")
-            cond_code = 5;
-        else if (cond.op == ">=")
-            cond_code = 6;
-        else
+        switch (col_type)
         {
-            std::cerr << "Unsupported operator: " << cond.op << "\n";
-            continue;
-        }
-
-        bool *d_temp_mask = nullptr;
-        cudaMalloc(&d_temp_mask, row_count * sizeof(bool));
-        cudaMemset(d_temp_mask, 0, row_count * sizeof(bool));
-
-        if (col_type == DataType::FLOAT)
+        case DataType::FLOAT:
         {
             float *d_col_data = nullptr;
             cudaMalloc(&d_col_data, row_count * sizeof(float));
-            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpyAsync(d_col_data, input_table.data[col_idx], row_count * sizeof(float), cudaMemcpyHostToDevice, streams[cond_idx]);
             float value = std::stof(cond.value);
-            filterKernel<float><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
+            filterKernel<float><<<numBlocks, numThreads, 0, streams[cond_idx]>>>(d_col_data, d_temp_masks[cond_idx], row_count, value, static_cast<uint8_t>(cond_code));
             cudaFree(d_col_data);
+            break;
         }
-        else if (col_type == DataType::DATETIME)
+        case DataType::DATETIME:
         {
             uint64_t *d_col_data = nullptr;
             cudaMalloc(&d_col_data, row_count * sizeof(uint64_t));
-            cudaMemcpy(d_col_data, input_table.data[col_idx], row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
+            cudaMemcpyAsync(d_col_data, input_table.data[col_idx], row_count * sizeof(uint64_t), cudaMemcpyHostToDevice, streams[cond_idx]);
             uint64_t value = getDateTime(cond.value);
-            filterKernel<uint64_t><<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, value, cond_code);
+            filterKernel<uint64_t><<<numBlocks, numThreads, 0, streams[cond_idx]>>>(d_col_data, d_temp_masks[cond_idx], row_count, value, static_cast<uint8_t>(cond_code));
             cudaFree(d_col_data);
+            break;
         }
-        else if (col_type == DataType::STRING)
+        case DataType::STRING:
         {
             const char **d_col_data = nullptr;
             cudaMalloc(&d_col_data, row_count * sizeof(char *));
             const char **host_strings = static_cast<const char **>(input_table.data[col_idx]);
 
-            char **d_strings = new char *[row_count];
+            std::unique_ptr<char *[], void (*)(char **)>
+            d_strings(
+                new char *[row_count],
+                [](char **ptr)
+                { delete[] ptr; });
 
             for (size_t i = 0; i < row_count; i++)
             {
                 size_t len = strlen(host_strings[i]) + 1;
                 cudaMalloc(&d_strings[i], len);
-                cudaMemcpy(d_strings[i], host_strings[i], len, cudaMemcpyHostToDevice);
-                cudaMemcpy(&d_col_data[i], &d_strings[i], sizeof(char *), cudaMemcpyHostToDevice);
+                cudaMemcpyAsync(d_strings[i], host_strings[i], len, cudaMemcpyHostToDevice, streams[cond_idx]);
+                cudaMemcpyAsync(&d_col_data[i], &d_strings[i], sizeof(char *), cudaMemcpyHostToDevice, streams[cond_idx]);
             }
 
             char *d_value = nullptr;
             cudaMalloc(&d_value, cond.value.size() + 1);
-            cudaMemcpy(d_value, cond.value.c_str(), cond.value.size() + 1, cudaMemcpyHostToDevice);
-            filterKernelString<<<numBlocks, numThreads>>>(d_col_data, d_temp_mask, row_count, d_value, cond_code);
+            cudaMemcpyAsync(d_value, cond.value.c_str(), cond.value.size() + 1, cudaMemcpyHostToDevice, streams[cond_idx]);
+            filterKernelString<<<numBlocks, numThreads, 0, streams[cond_idx]>>>(d_col_data, d_temp_masks[cond_idx], row_count, d_value, static_cast<uint8_t>(cond_code));
 
             for (size_t i = 0; i < row_count; i++)
             {
                 cudaFree(d_strings[i]);
             }
-            delete[] d_strings;
             cudaFree(d_value);
             cudaFree(d_col_data);
+            break;
         }
+        default:
+            for (auto &stream : streams)
+                cudaStreamDestroy(stream);
+            cudaStreamDestroy(final_stream);
+            cudaFree(d_combined_mask);
+            for (auto &mask : d_temp_masks)
+                cudaFree(mask);
+            throw std::runtime_error("Unsupported data type: " + std::to_string(static_cast<int>(col_type)));
+        }
+        cudaStreamSynchronize(streams[cond_idx]);
 
         if (cond_idx == 0)
         {
-            cudaMemcpy(d_combined_mask, d_temp_mask, row_count * sizeof(bool), cudaMemcpyDeviceToDevice);
+            cudaMemcpyAsync(d_combined_mask, d_temp_masks[cond_idx], row_count * sizeof(bool), cudaMemcpyDeviceToDevice, final_stream);
         }
         else
         {
             const std::string &op = logical_ops[cond_idx - 1];
             if (op == "AND")
             {
-                andKernel<<<numBlocks, numThreads>>>(d_combined_mask, d_temp_mask, row_count);
+                andKernel<<<numBlocks, numThreads, 0, final_stream>>>(d_combined_mask, d_temp_mask, row_count);
             }
             else if (op == "OR")
             {
-                orKernel<<<numBlocks, numThreads>>>(d_combined_mask, d_temp_mask, row_count);
+                orKernel<<<numBlocks, numThreads, 0, final_stream>>>(d_combined_mask, d_temp_mask, row_count);
             }
         }
-        bool *h_temp_mask = new bool[row_count];
-        cudaMemcpy(h_temp_mask, d_temp_mask, row_count * sizeof(bool), cudaMemcpyDeviceToHost);
-        // for (size_t i = 0; i < row_count; i++)
-        // {
-        //     if (h_temp_mask[i])
-        //     {
-        //         std::cout << "Row " << i << " matches condition " << cond_idx << "\n";
-        //     }
-        // }
-        cudaFree(d_temp_mask);
-        cudaDeviceSynchronize();
+        cudaFree(d_temp_masks[cond_idx]);
     }
 
-    cudaMemcpy(h_final_mask, d_combined_mask, row_count * sizeof(bool), cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(h_final_mask.get(), d_combined_mask, row_count * sizeof(bool), cudaMemcpyDeviceToHost, final_stream);
+    cudaStreamSynchronize(final_stream);
     cudaFree(d_combined_mask);
+
+    for (auto &stream : streams)
+    {
+        cudaStreamDestroy(stream);
+    }
+    cudaStreamDestroy(final_stream);
 
     size_t filtered_row_count = 0;
     for (size_t i = 0; i < row_count; i++)
@@ -266,8 +303,7 @@ bool *Filter::getSelectedRows(const TableResults &input_table) const
             filtered_row_count++;
     }
 
-    // std::cout << "Total rows matched: " << filtered_row_count << "\n";
-    return h_final_mask;
+    return h_final_mask.release();
 }
 
 TableResults Filter::applyFilter(const TableResults &input_table) const
@@ -285,9 +321,9 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
         if (h_selected_rows[i])
             selected_count++;
     }
-    // std::cout << "DEBUG: Calculated selected_count = " << selected_count << std::endl;
 
     TableResults filtered_table;
+    filtered_table.has_more = input_table.has_more;
     filtered_table.column_count = input_table.column_count;
     filtered_table.columns = input_table.columns;
     filtered_table.row_count = selected_count;

@@ -4,9 +4,12 @@
 #include <unordered_map>
 #include <memory>
 #include <iostream>
+#include <future>
+#include <stdexcept>
 #include "duckdb.hpp"
 #include "constants/db.hpp"
 #include "dbms/csv_importer.hpp"
+#include <mutex>
 
 class PhysicalOpNode
 {

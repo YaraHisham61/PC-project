@@ -173,71 +173,87 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
     return node;
 }
+
 void PhysicalOpNode::executePlanInBatches(
     duckdb::PhysicalOperator *op, DB *data_base, size_t batch_size = 1000)
 {
-    TableResults *current_batch = nullptr;
-    size_t batch_index = 0;
     bool is_aggregate = (op->GetName() == "UNGROUPED_AGGREGATE");
-    // bool is_order_by = (op->GetName() == "ORDER_BY");
-    // std::vector<TableResults> order_by_batches; // For OrderBy merging
-
     std::unique_ptr<Aggregate> aggregate_op;
-    // std::unique_ptr<OrderBy> order_by_op;
     if (is_aggregate)
     {
         aggregate_op = std::make_unique<Aggregate>(op->ParamsToString());
     }
-    // else if (is_order_by)
-    // {
-    //     order_by_op = std::make_unique<OrderBy>(op->ParamsToString());
-    // }
 
+    // Buffer for non-aggregate results, limited by memory
+    std::vector<std::unique_ptr<TableResults>> result_buffer;
+    const size_t max_buffer_memory = 1ULL * 1024 * 1024 * 1024; // 1 GB
+    const size_t max_buffer_size = 5 * batch_size;              // Max 5 batch
+    size_t current_buffer_memory = 0;
+    bool has_more = true;
+    size_t batch_index = 0;
     while (true)
     {
-        current_batch = nullptr;
-        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size);
+        std::unique_ptr<TableResults> batch = std::make_unique<TableResults>();
+        batch->batch_index = batch_index;
+        TableResults *batch_ptr = batch.get();
+        auto node = buildPlanTree(op, data_base, &batch_ptr, batch_index, batch_size);
 
-        if (!current_batch)
+        if (!batch_ptr)
         {
-            std::cerr << "Error: No result for batch " << batch_index << "\n";
-            break;
+            throw std::runtime_error("No result for batch " + std::to_string(batch_index));
         }
 
-        if (is_aggregate && current_batch->row_count != 0)
+        if (batch->row_count == 0)
         {
-            aggregate_op->updateAggregates(*current_batch);
+            if (!batch->has_more)
+            {
+                result_buffer.push_back(std::move(batch));
+                break;
+            }
+            batch_index++;
+            continue;
         }
-        // else if (is_order_by)
-        // {
-        //     order_by_batches.push_back(*current_batch);
-        // }
+
+        if (is_aggregate)
+        {
+            aggregate_op->updateAggregates(*batch);
+        }
         else
         {
-            if (current_batch->row_count != 0)
+            size_t batch_memory = batch->estimateMemorySize();
+            has_more = batch->has_more;
+
+            current_buffer_memory += batch_memory;
+            result_buffer.push_back(std::move(batch));
+
+            if (current_buffer_memory >= max_buffer_memory || result_buffer.size() * batch_size >= max_buffer_size)
             {
-                current_batch->write_to_file();
+                for (auto &buffered_batch : result_buffer)
+                {
+                    buffered_batch->write_to_file();
+                }
+                result_buffer.clear();
+                current_buffer_memory = 0;
             }
-            // current_batch->print();
         }
 
-        if (!current_batch->has_more)
+        if (!has_more)
+        {
             break;
+        }
         batch_index++;
-        current_batch->batch_index = batch_index;
+    }
+
+    if (!is_aggregate)
+    {
+        for (auto &buffered_batch : result_buffer)
+        {
+            buffered_batch->write_to_file();
+        }
     }
 
     if (is_aggregate)
     {
         aggregate_op->intermidiate_results->write_aggregate_to_file();
-        // aggregate_op->intermidiate_results->print();
     }
-    // else if (is_order_by)
-    // {
-    //     TableResults final_result = order_by_op->mergeBatches(order_by_batches);
-    //     final_result.write_to_file(output_filename, false);
-    //     final_result.print();
-    // }
-
-    delete current_batch;
 }

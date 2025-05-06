@@ -6,6 +6,9 @@ project(PC-project LANGUAGES CXX CUDA)
 find_package(CUDAToolkit REQUIRED)
 # # Export compile commands for IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -O3")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3")
 
 # # Set build type
 set(CMAKE_CUDA_ARCHITECTURES 75) 

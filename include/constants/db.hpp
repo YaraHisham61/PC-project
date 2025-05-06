@@ -50,7 +50,18 @@ public:
     bool has_more = true;
     size_t batch_index = 0;
 
-    size_t getColumnIndex(const std::string &column_name) const
+    size_t estimateMemorySize() const
+    {
+        size_t total_size = 0;
+        for (size_t i = 0; i < column_count; ++i)
+        {
+            total_size += row_count * getDataTypeNumBytes(columns[i].type);
+        }
+        return total_size;
+    }
+
+    size_t
+    getColumnIndex(const std::string &column_name) const
     {
         for (size_t i = 0; i < columns.size(); ++i)
         {

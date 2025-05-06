@@ -312,8 +312,10 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
     {
         return input_table;
     }
-    bool *h_selected_rows = getSelectedRows(input_table);
-
+    std::unique_ptr<bool[], void (*)(bool *)> h_selected_rows(
+        getSelectedRows(input_table),
+        [](bool *ptr)
+        { delete[] ptr; });
     size_t selected_count = 0;
     const size_t row_count = input_table.row_count;
     for (size_t i = 0; i < row_count; i++)
@@ -330,84 +332,120 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
     filtered_table.batch_index = input_table.batch_index;
     filtered_table.data.resize(input_table.column_count);
 
-    bool *d_mask;
-    cudaMalloc(&d_mask, row_count * sizeof(bool));
-    cudaMemcpy(d_mask, h_selected_rows, row_count * sizeof(bool), cudaMemcpyHostToDevice);
+    // Create streams: one for prefix sum and one per column
+    cudaStream_t prefix_stream;
+    cudaStreamCreate(&prefix_stream);
+    std::vector<cudaStream_t> col_streams(input_table.column_count);
+    for (auto &stream : col_streams)
+    {
+        cudaStreamCreate(&stream);
+    }
 
+    bool *d_mask = nullptr;
     unsigned int *d_positions;
+
+    cudaMalloc(&d_mask, row_count * sizeof(bool));
     cudaMalloc(&d_positions, row_count * sizeof(unsigned int));
+
+    cudaMemcpyAsync(d_mask, h_selected_rows.get(), row_count * sizeof(bool), cudaMemcpyHostToDevice, prefix_stream);
 
     int threads = 256;
     int blocks = (row_count + threads - 1) / threads;
     size_t shared_mem = threads * sizeof(unsigned int);
 
-    computeOutputPositions<<<blocks, threads, shared_mem>>>(d_mask, d_positions, row_count);
-    cudaDeviceSynchronize();
+    computeOutputPositions<<<blocks, threads, shared_mem, prefix_stream>>>(d_mask, d_positions, row_count);
+    cudaStreamSynchronize(prefix_stream);
 
     for (size_t col_idx = 0; col_idx < input_table.column_count; col_idx++)
     {
         const DataType col_type = input_table.columns[col_idx].type;
 
-        if (col_type == DataType::FLOAT)
+        switch (col_type)
+        {
+        case DataType::FLOAT:
         {
             float *h_input_data = static_cast<float *>(input_table.data[col_idx]);
-            float *d_input, *d_output;
+            float *d_input = nullptr;
+            float *d_output = nullptr;
             cudaMalloc(&d_input, row_count * sizeof(float));
             cudaMalloc(&d_output, selected_count * sizeof(float));
+            std::unique_ptr<float[], void (*)(float *)> h_output_data(
+                static_cast<float *>(malloc(selected_count * sizeof(float))),
+                [](float *ptr)
+                { free(ptr); });
 
-            float *h_output_data = static_cast<float *>(malloc(selected_count * sizeof(float)));
-            cudaMemcpy(d_input, h_input_data, row_count * sizeof(float), cudaMemcpyHostToDevice);
-            copySelectedRowsKernel<float><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
-            cudaDeviceSynchronize();
-            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(float), cudaMemcpyDeviceToHost);
+            cudaMemcpyAsync(d_input, h_input_data, row_count * sizeof(float), cudaMemcpyHostToDevice, col_streams[col_idx]);
+            copySelectedRowsKernel<float><<<blocks, threads, 0, col_streams[col_idx]>>>(d_input, d_output, d_mask, d_positions, row_count);
+            cudaMemcpyAsync(h_output_data.get(), d_output, selected_count * sizeof(float), cudaMemcpyDeviceToHost, col_streams[col_idx]);
 
-            filtered_table.data[col_idx] = h_output_data;
+            filtered_table.data[col_idx] = h_output_data.release();
             cudaFree(d_input);
             cudaFree(d_output);
+            break;
         }
-        else if (col_type == DataType::DATETIME)
+        case DataType::DATETIME:
         {
             uint64_t *h_input_data = static_cast<uint64_t *>(input_table.data[col_idx]);
-            uint64_t *d_input, *d_output;
+            uint64_t *d_input = nullptr;
+            uint64_t *d_output = nullptr;
             cudaMalloc(&d_input, row_count * sizeof(uint64_t));
             cudaMalloc(&d_output, selected_count * sizeof(uint64_t));
-            uint64_t *h_output_data = static_cast<uint64_t *>(malloc(selected_count * sizeof(uint64_t)));
+            std::unique_ptr<uint64_t[], void (*)(uint64_t *)> h_output_data(
+                static_cast<uint64_t *>(malloc(selected_count * sizeof(uint64_t))),
+                [](uint64_t *ptr)
+                { free(ptr); });
 
-            cudaMemcpy(d_input, h_input_data, row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
-            copySelectedRowsKernel<uint64_t><<<blocks, threads>>>(d_input, d_output, d_mask, d_positions, row_count);
-            cudaDeviceSynchronize();
-            cudaMemcpy(h_output_data, d_output, selected_count * sizeof(uint64_t), cudaMemcpyDeviceToHost);
+            cudaMemcpyAsync(d_input, h_input_data, row_count * sizeof(uint64_t), cudaMemcpyHostToDevice, col_streams[col_idx]);
+            copySelectedRowsKernel<uint64_t><<<blocks, threads, 0, col_streams[col_idx]>>>(d_input, d_output, d_mask, d_positions, row_count);
+            cudaMemcpyAsync(h_output_data.get(), d_output, selected_count * sizeof(uint64_t), cudaMemcpyDeviceToHost, col_streams[col_idx]);
 
-            filtered_table.data[col_idx] = h_output_data;
+            filtered_table.data[col_idx] = h_output_data.release();
             cudaFree(d_input);
             cudaFree(d_output);
+            break;
         }
-        else if (col_type == DataType::STRING)
+        case DataType::STRING:
         {
             const char **h_input_strings = static_cast<const char **>(input_table.data[col_idx]);
-            const char **h_output_strings = static_cast<const char **>(malloc(selected_count * sizeof(char *)));
+            std::unique_ptr<const char *[], void (*)(const char **)>
+                h_output_strings(
+                    static_cast<const char **>(malloc(selected_count * sizeof(char *))),
+                    [](const char **ptr)
+                    { free(ptr); });
 
-            const char **d_input_strings;
+            const char **d_input_strings = nullptr;
             cudaMalloc(&d_input_strings, row_count * sizeof(char *));
-            cudaMemcpy(d_input_strings, h_input_strings, row_count * sizeof(char *), cudaMemcpyHostToDevice);
+            cudaMemcpyAsync(d_input_strings, h_input_strings, row_count * sizeof(char *), cudaMemcpyHostToDevice, col_streams[col_idx]);
 
-            const char **d_output_strings;
+            const char **d_output_strings = nullptr;
             cudaMalloc(&d_output_strings, selected_count * sizeof(char *));
 
-            copySelectedStringRowsKernel<<<blocks, threads>>>(d_input_strings, d_output_strings, d_mask, d_positions, row_count);
-            cudaDeviceSynchronize();
+            copySelectedStringRowsKernel<<<blocks, threads, 0, col_streams[col_idx]>>>(d_input_strings, d_output_strings, d_mask, d_positions, row_count);
+            cudaMemcpyAsync(h_output_strings.get(), d_output_strings, selected_count * sizeof(char *), cudaMemcpyDeviceToHost, col_streams[col_idx]);
 
-            cudaMemcpy(h_output_strings, d_output_strings, selected_count * sizeof(char *), cudaMemcpyDeviceToHost);
-
-            filtered_table.data[col_idx] = h_output_strings;
+            filtered_table.data[col_idx] = h_output_strings.release();
             cudaFree(d_input_strings);
             cudaFree(d_output_strings);
+            break;
+        }
+        default:
+            cudaStreamDestroy(prefix_stream);
+            for (auto &stream : col_streams)
+                cudaStreamDestroy(stream);
+            cudaFree(d_mask);
+            cudaFree(d_positions);
+            throw std::runtime_error("Unsupported data type: " + std::to_string(static_cast<int>(col_type)));
         }
     }
 
+    for (auto &stream : col_streams)
+    {
+        cudaStreamSynchronize(stream);
+        cudaStreamDestroy(stream);
+    }
+    cudaStreamDestroy(prefix_stream);
     cudaFree(d_mask);
     cudaFree(d_positions);
-    delete[] h_selected_rows;
 
     return filtered_table;
 }

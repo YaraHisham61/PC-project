@@ -147,8 +147,8 @@ public:
                 else if (columns[col].type == DataType::DATETIME)
                 {
                     uint64_t timestamp = static_cast<uint64_t *>(data[col])[row];
-                    std::time_t time = static_cast<std::time_t>(timestamp);
-                    file << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
+                    // std::time_t time = static_cast<std::time_t>(timestamp);
+                    file << getDateTimeStr(timestamp);
                 }
                 else if (columns[col].type == DataType::STRING)
                 {

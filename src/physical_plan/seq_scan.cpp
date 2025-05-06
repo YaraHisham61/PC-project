@@ -24,6 +24,9 @@ SeqScan::SeqScan(const duckdb::InsertionOrderPreservingMap<std::string> &params)
             }
         }
     }
+    // Load CSV file
+    std::string csv_file = DATA_DIR + this->table_name + ".csv";
+    this->doc = rapidcsv::Document(csv_file);
 }
 
 void SeqScan::print() const
@@ -47,15 +50,11 @@ TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t 
     TableResults result;
     result.batch_index = batch_index;
 
-    // Load CSV file
-    std::string csv_file = DATA_DIR + this->table_name + ".csv";
-    rapidcsv::Document doc(csv_file);
     std::vector<std::string> cols_to_read = this->projections;
 
-    // Calculate row range for the current batch
-    size_t total_rows = doc.GetRowCount();
+    size_t total_rows = this->doc.GetRowCount();
     size_t start_row = batch_index * batch_size;
-    if (start_row > total_rows)
+    if (start_row >= total_rows)
     {
         result.row_count = 0;
         result.has_more = false; // No more batches to read
@@ -86,7 +85,6 @@ TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t 
     }
     result.column_count = result.columns.size();
 
-  
     if (result.row_count == 0)
     {
         result.has_more = false;
@@ -109,7 +107,7 @@ TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t 
             {
                 try
                 {
-                    float value = doc.GetCell<float>(col_name, row_idx);
+                    float value = this->doc.GetCell<float>(col_name, row_idx);
                     static_cast<float *>(result.data[col.idx])[row_idx - start_row] = value;
                 }
                 catch (const std::exception &e)
@@ -126,7 +124,7 @@ TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t 
             {
                 try
                 {
-                    std::string date_str = doc.GetCell<std::string>(col_name, row_idx);
+                    std::string date_str = this->doc.GetCell<std::string>(col_name, row_idx);
                     static_cast<uint64_t *>(result.data[col.idx])[row_idx - start_row] = getDateTime(date_str);
                 }
                 catch (const std::exception &e)
@@ -142,7 +140,7 @@ TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t 
             {
                 try
                 {
-                    std::string str_value = doc.GetCell<std::string>(col_name, row_idx);
+                    std::string str_value = this->doc.GetCell<std::string>(col_name, row_idx);
                     static_cast<char **>(result.data[col.idx])[row_idx - start_row] = strdup(str_value.c_str());
                 }
                 catch (const std::exception &e)

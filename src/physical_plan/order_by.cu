@@ -195,10 +195,6 @@ TableResults OrderBy::executeOrderBy(const TableResults &input_table)
             cudaDeviceSynchronize();
             float *h_output_data = static_cast<float *>(malloc(result.row_count * sizeof(float)));
             cudaMemcpy(h_output_data, d_output, result.row_count * sizeof(float), cudaMemcpyDeviceToHost);
-            // for (size_t j = 0; j < result.row_count; ++j)
-            // {
-            //     std::cout << "h_output_data[" << j << "] = " << h_output_data[j] << std::endl;
-            // }
             result.data[i] = h_output_data;
             cudaFree(d_input);
             cudaFree(d_output);

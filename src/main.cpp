@@ -41,7 +41,7 @@ int main()
     // con.Query("PRAGMA profiling_mode=detailed");
 
     con.Query("SET disabled_optimizers = 'filter_pushdown, statistics_propagation';"); // Disable returning empty results
-    // Create sample data
+    con.Query("SET threads TO 1;");
 
     profiler.start("Import CSV");
     CSVImporter csv_importer(db, con);
@@ -57,7 +57,7 @@ int main()
         std::cout << "CSV file imported successfully." << std::endl;
     }
     profiler.stop("Import CSV");
-    // data_base.print_databse();
+    data_base.print_databse();
     con.BeginTransaction();
     // Query to analyze
 
@@ -65,7 +65,7 @@ int main()
     // std::string query = "SELECT COUNT(name) FROM Student;";
     // id(N)(P), completion_date(D), longitude(N), total(N)
 
-    std::string query = "SELECT * FROM table_1 WHERE id > 9149733; ";
+    std::string query = "SELECT * FROM Student WHERE id > 10; ";
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT count(*) ,count(name) FROM Student;";
     // std::string query = "SELECT t1.id , t5.table_1_id , t4.table_1_id FROM  table_1 t1 , table_5 t5, table_4 t4 where t1.id = t5.table_1_id and t1.id = t4.table_1_id and t1.id >8000";
@@ -88,23 +88,23 @@ int main()
 
     // std::cout << physical_plan.get()->Root().ToString() << std::endl;
 
-    profiler.start("CPU Execution");
-    std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
-    // std::string create_table_query = "INSERT INTO Student SELECT * FROM read_csv('" + csv_file + "',header=false);";
-    std::string create_table_query = "COPY table_1 FROM '" + csv_file + "';";
-    auto create_result = con.Query(create_table_query);
-    auto result = con.Query(query);
-    profiler.stop("CPU Execution");
+    // profiler.start("CPU Execution");
+    // std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
+    // // std::string create_table_query = "INSERT INTO Student SELECT * FROM read_csv('" + csv_file + "',header=false);";
+    // std::string create_table_query = "COPY table_1 FROM '" + csv_file + "';";
+    // auto create_result = con.Query(create_table_query);
+    // auto result = con.Query(query);
+    // profiler.stop("CPU Execution");
     // std::cout << "CPU Execution Result:\n";
-    if (result->HasError())
-    {
-        std::cerr << "Query execution failed: " << result->GetError() << std::endl;
-        return 1;
-    }
+    // if (result->HasError())
+    // {
+    //     std::cerr << "Query execution failed: " << result->GetError() << std::endl;
+    //     return 1;
+    // }
     // result->Print();
 
     profiler.start("GPU Execution");
-    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 10000);
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 1000);
     // printPhysicalPlan(&(physical_plan.get()->Root()));
     profiler.stop("GPU Execution");
 

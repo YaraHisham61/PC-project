@@ -67,16 +67,31 @@ enum class DataType : __uint8_t
            valueTm.tm_sec;
 }
 
-[[nodiscard]] inline std::string getDateTimeStr(uint64_t seconds)
+[[nodiscard]] inline std::string getDateTimeStr(uint64_t value)
 {
-    std::time_t raw_time = static_cast<std::time_t>(seconds);
+    // Extract components from the custom uint64_t format
+    int year = value / 10000000000ULL; // Extract YYYY
+    value %= 10000000000ULL;
+    int month = value / 100000000ULL; // Extract MM
+    value %= 100000000ULL;
+    int day = value / 1000000ULL; // Extract DD
+    value %= 1000000ULL;
+    int hour = value / 10000ULL; // Extract HH
+    value %= 10000ULL;
+    int minute = value / 100ULL; // Extract MM
+    int second = value % 100ULL; // Extract SS
 
-    // Get time structure (use gmtime for UTC or localtime for local timezone)
-    std::tm tm_info;
-    gmtime_r(&raw_time, &tm_info); // Thread-safe version
+    // Create a std::tm structure
+    std::tm tm_info = {};
+    tm_info.tm_year = year - 1900; // tm_year is years since 1900
+    tm_info.tm_mon = month - 1;    // tm_mon is 0-based (0-11)
+    tm_info.tm_mday = day;
+    tm_info.tm_hour = hour;
+    tm_info.tm_min = minute;
+    tm_info.tm_sec = second;
 
+    // Format the time
     char buffer[26];
-    // Format the time (strftime is more reliable than put_time)
     strftime(buffer, 26, "%Y-%m-%d %H:%M:%S", &tm_info);
 
     return std::string(buffer);

@@ -8,8 +8,5 @@ build/
 .vscode/
 .idea/
 *./vendor/duckdb
-*CMakeLists.txt
-CMakeLists.txt
-/CMakeLists.txt
-CMakeLists.txt
-data/
+data/*.csv
+*.csv

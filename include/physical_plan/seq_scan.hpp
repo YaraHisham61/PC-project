@@ -9,6 +9,7 @@ class SeqScan : public PhysicalOpNode
 public:
     std::string table_name;
     std::vector<std::string> projections;
+    rapidcsv::Document doc;
 
     SeqScan(const duckdb::InsertionOrderPreservingMap<std::string> &params);
     ~SeqScan() = default;

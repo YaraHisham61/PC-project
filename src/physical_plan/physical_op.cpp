@@ -170,7 +170,6 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         // ordered_result.print();
         **input_table_ptr = std::move(ordered_result);
     }
-    
 
     return node;
 }

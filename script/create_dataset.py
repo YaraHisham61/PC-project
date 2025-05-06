@@ -18,8 +18,8 @@ import pandas as pd
 # num_tables =  3
 
 # normal Config
-min_num_records = 10000
-max_num_record = 10001
+min_num_records = 10_000
+max_num_record =  10_001
 min_columns = 3
 max_columns = 5
 min_pk_columns = 1
@@ -78,7 +78,7 @@ def generate_random_values(column_type):
         return random.randint(1, max_num_record)
         # return round(random.uniform(1.0, max_num_record), 2)
     elif column_type == 'text':
-        return fake.text(max_nb_chars=250).replace('\n', '\\n')
+        return fake.text(max_nb_chars=20).replace('\n', '\\n')
     elif column_type == 'datetime':
         # Generate a fake datetime and format it as 'yyyy-MM-dd HH:mm:ss'
         return fake.date_time_this_century().strftime('%Y-%m-%d %H:%M:%S')
@@ -99,7 +99,7 @@ def generate_unique_values(datatype, n):
     elif datatype == 'text':
         values = set()
         while len(values) < n:
-            values.update(fake.text(max_nb_chars=250).replace('\n', '\\n') for _ in range(n))
+            values.update(fake.text(max_nb_chars=20).replace('\n', '\\n') for _ in range(n))
         return list(values)[:n]
 
     elif datatype == 'datetime':

@@ -18,14 +18,14 @@ import pandas as pd
 # num_tables =  3
 
 # normal Config
-min_num_records = 1_000_000
-max_num_record =  1_000_001
+min_num_records = 50_000
+max_num_record =  50_001
 min_columns = 3
 max_columns = 5
 min_pk_columns = 1
 max_pk_columns = 1
 folder_path = 'data'
-num_tables=  1
+num_tables=  5
 
 max_fk_columns = 2
 seed = 42

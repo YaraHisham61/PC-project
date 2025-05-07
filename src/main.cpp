@@ -66,12 +66,12 @@ int main()
     // id(N)(P), completion_date(D), longitude(N), total(N)
 
     // std::string query = "SELECT id FROM table_1 ORDER BY id; ";
-    std::string query = "SELECT AVG(e.Salary) AS AverageSalary FROM Employees e,SalesOrders s WHERE e.Employees_id = s.Employees_id AND s.TotalAmount > 200; ";
+    // std::string query = "SELECT AVG(e.Salary) AS AverageSalary FROM Employees e,SalesOrders s WHERE e.Employees_id = s.Employees_id AND s.TotalAmount > 200; ";
 
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT count(*) ,count(name) FROM Student;";
     // std::string query = "SELECT t1.id , t5.table_1_id , t4.table_1_id FROM  table_1 t1 , table_5 t5, table_4 t4 where t1.id = t5.table_1_id and t1.id = t4.table_1_id and t1.id >8000";
-    // std::string query = "SELECT * FROM  table1 t4 , table4 t1 WHERE t4.id= t1.table_1_id and t1.last_modified = t4.completion_date;";
+    std::string query = "SELECT * FROM  table_1 t1 , table_4 t4 WHERE t1.id= t4.table_1_id;";
     // std::string query = "SELECT * FROM  table1 t4 , table4 t1 WHERE t4.id= t1.table_1_id and t1.last_modified = t4.completion_date;";
 
     // std::string query = "SELECT id,year,name,name FROM Student;";
@@ -88,25 +88,29 @@ int main()
 
     // std::cout << "Physical plan:\n";
 
-    std::cout << physical_plan.get()->Root().ToString() << std::endl;
+    // std::cout << physical_plan.get()->Root().ToString() << std::endl;
 
-    // profiler.start("CPU Execution");
-    // std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
+    profiler.start("CPU Execution");
+    std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
+    std::string csv_file4 = std::string(DATA_DIR) + "table_4.csv";
     // // std::string create_table_query = "INSERT INTO Student SELECT * FROM read_csv('" + csv_file + "',header=false);";
-    // std::string create_table_query = "COPY table_1 FROM '" + csv_file + "';";
-    // auto create_result = con.Query(create_table_query);
-    // auto result = con.Query(query);
-    // profiler.stop("CPU Execution");
-    // // std::cout << "CPU Execution Result:\n";
-    // if (result->HasError())
-    // {
-    //     std::cerr << "Query execution failed: " << result->GetError() << std::endl;
-    //     return 1;
-    // }
-    // // result->Print();
+    std::string create_table_query = "COPY table_1 FROM '" + csv_file + "';";
+    std::string create_table_query4 = "COPY table_4 FROM '" + csv_file4 + "';";
+    auto create_result = con.Query(create_table_query);
+    auto create_result4 = con.Query(create_table_query4);
+    auto result = con.Query(query);
+    profiler.stop("CPU Execution");
+    std::cout << "CPU Execution Result:\n";
+    if (result->HasError())
+    {
+        std::cerr << "Query execution failed: " << result->GetError() << std::endl;
+        return 1;
+    }
+    std::cout << "Result:\n";
+    std::cout << result->RowCount() << "\n";
 
     profiler.start("GPU Execution");
-    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 1000000);
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 10000);
     // printPhysicalPlan(&(physical_plan.get()->Root()));
     profiler.stop("GPU Execution");
 

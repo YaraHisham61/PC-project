@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 project(PC-project LANGUAGES CXX CUDA)
 
 # Find dependencies
@@ -24,7 +24,7 @@ include_directories(
     vendor/duckdb/src/include
 )
 link_directories(
-    vendor/duckdb/build/src
+    vendor/duckdb/build/release/src
 )
 
 # Collect all .cpp files in the src directory

@@ -179,6 +179,7 @@ void PhysicalOpNode::executePlanInBatches(
 {
     TableResults *current_batch = nullptr;
     size_t batch_index = 0;
+    size_t total_rows = 0;
     bool is_aggregate = (op->GetName() == "UNGROUPED_AGGREGATE");
     // bool is_order_by = (op->GetName() == "ORDER_BY");
     // std::vector<TableResults> order_by_batches; // For OrderBy merging
@@ -197,6 +198,7 @@ void PhysicalOpNode::executePlanInBatches(
     while (true)
     {
         current_batch = nullptr;
+
         auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size);
 
         if (!current_batch)
@@ -208,6 +210,7 @@ void PhysicalOpNode::executePlanInBatches(
         if (is_aggregate && current_batch->row_count != 0)
         {
             aggregate_op->updateAggregates(*current_batch);
+            total_rows += current_batch->total_rows;
         }
         // else if (is_order_by)
         // {
@@ -230,7 +233,9 @@ void PhysicalOpNode::executePlanInBatches(
 
     if (is_aggregate)
     {
-        aggregate_op->intermidiate_results->write_aggregate_to_file();
+        aggregate_op->intermidiate_results->total_rows = total_rows;
+        aggregate_op->finalizeAggregates(*aggregate_op->intermidiate_results);
+        aggregate_op->intermidiate_results->write_to_file();
         // aggregate_op->intermidiate_results->print();
     }
     // else if (is_order_by)

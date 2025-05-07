@@ -291,28 +291,50 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
     filtered_table.batch_index = input_table.batch_index;
     filtered_table.data.resize(input_table.column_count);
 
-    // Create streams: one for prefix sum and one per column
-    cudaStream_t prefix_stream;
-    cudaStreamCreate(&prefix_stream);
-    std::vector<cudaStream_t> col_streams(input_table.column_count);
-    for (auto &stream : col_streams)
+    const size_t chunk_size = 10000;
+    size_t num_chunks = (row_count + chunk_size - 1) / chunk_size;
+    std::vector<cudaStream_t> streams(std::max<size_t>(1, num_chunks));
+    for (auto &stream : streams)
     {
         cudaStreamCreate(&stream);
     }
+    cudaStream_t prefix_stream;
+    cudaStreamCreate(&prefix_stream);
 
     bool *d_mask = nullptr;
-    unsigned int *d_positions;
-
     cudaMalloc(&d_mask, row_count * sizeof(bool));
-    cudaMalloc(&d_positions, row_count * sizeof(unsigned int));
-
     cudaMemcpyAsync(d_mask, h_selected_rows.get(), row_count * sizeof(bool), cudaMemcpyHostToDevice, prefix_stream);
 
-    int threads = 256;
-    int blocks = (row_count + threads - 1) / threads;
-    size_t shared_mem = threads * sizeof(unsigned int);
+    std::vector<unsigned int> h_positions(row_count);
+    unsigned int *d_positions = nullptr;
+    cudaMalloc(&d_positions, row_count * sizeof(unsigned int));
 
-    computeOutputPositions<<<blocks, threads, shared_mem, prefix_stream>>>(d_mask, d_positions, row_count);
+    for (size_t chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++)
+    {
+        size_t chunk_offset = chunk_idx * chunk_size;
+        size_t chunk_rows = std::min(chunk_size, row_count - chunk_offset);
+        int threads = 256;
+        int blocks = (chunk_rows + threads - 1) / threads;
+        size_t shared_mem = threads * sizeof(unsigned int);
+        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+        bool *d_chunk_mask = nullptr;
+        cudaMalloc(&d_chunk_mask, chunk_rows * sizeof(bool));
+        cudaMemcpyAsync(d_chunk_mask, h_selected_rows.get() + chunk_offset, chunk_rows * sizeof(bool),
+                        cudaMemcpyHostToDevice, streams[stream_idx]);
+
+        unsigned int *d_chunk_positions = nullptr;
+        cudaMalloc(&d_chunk_positions, chunk_rows * sizeof(unsigned int));
+        computeOutputPositions<<<blocks, threads, shared_mem, streams[stream_idx]>>>(d_chunk_mask, d_chunk_positions, chunk_rows);
+        cudaMemcpyAsync(h_positions.data() + chunk_offset, d_chunk_positions, chunk_rows * sizeof(unsigned int),
+                        cudaMemcpyDeviceToHost, streams[stream_idx]);
+
+        cudaStreamSynchronize(streams[stream_idx]);
+        cudaFree(d_chunk_mask);
+        cudaFree(d_chunk_positions);
+    }
+
+    cudaMemcpyAsync(d_positions, h_positions.data(), row_count * sizeof(unsigned int), cudaMemcpyHostToDevice, prefix_stream);
     cudaStreamSynchronize(prefix_stream);
 
     for (size_t col_idx = 0; col_idx < input_table.column_count; col_idx++)
@@ -324,80 +346,194 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
         case DataType::FLOAT:
         {
             float *h_input_data = static_cast<float *>(input_table.data[col_idx]);
-            float *d_input = nullptr;
-            float *d_output = nullptr;
-            cudaMalloc(&d_input, row_count * sizeof(float));
-            cudaMalloc(&d_output, selected_count * sizeof(float));
             std::unique_ptr<float[], void (*)(float *)> h_output_data(
                 static_cast<float *>(malloc(selected_count * sizeof(float))),
                 [](float *ptr)
                 { free(ptr); });
+            size_t output_offset = 0;
 
-            cudaMemcpyAsync(d_input, h_input_data, row_count * sizeof(float), cudaMemcpyHostToDevice, col_streams[col_idx]);
-            copySelectedRowsKernel<float><<<blocks, threads, 0, col_streams[col_idx]>>>(d_input, d_output, d_mask, d_positions, row_count);
-            cudaMemcpyAsync(h_output_data.get(), d_output, selected_count * sizeof(float), cudaMemcpyDeviceToHost, col_streams[col_idx]);
+            for (size_t chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++)
+            {
+                size_t chunk_offset = chunk_idx * chunk_size;
+                size_t chunk_rows = std::min(chunk_size, row_count - chunk_offset);
+                size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                float *d_input = nullptr;
+                cudaMalloc(&d_input, chunk_rows * sizeof(float));
+                cudaMemcpyAsync(d_input, h_input_data + chunk_offset, chunk_rows * sizeof(float),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                bool *d_chunk_mask = nullptr;
+                cudaMalloc(&d_chunk_mask, chunk_rows * sizeof(bool));
+                cudaMemcpyAsync(d_chunk_mask, h_selected_rows.get() + chunk_offset, chunk_rows * sizeof(bool),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                unsigned int *d_chunk_positions = nullptr;
+                cudaMalloc(&d_chunk_positions, chunk_rows * sizeof(unsigned int));
+                cudaMemcpyAsync(d_chunk_positions, h_positions.data() + chunk_offset, chunk_rows * sizeof(unsigned int),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                size_t chunk_selected_count = 0;
+                for (size_t i = chunk_offset; i < chunk_offset + chunk_rows && i < row_count; i++)
+                {
+                    if (h_selected_rows[i])
+                        chunk_selected_count++;
+                }
+
+                float *d_output = nullptr;
+                if (chunk_selected_count > 0)
+                {
+                    cudaMalloc(&d_output, chunk_selected_count * sizeof(float));
+                    int threads = 256;
+                    int blocks = (chunk_rows + threads - 1) / threads;
+                    copySelectedRowsKernel<float><<<blocks, threads, 0, streams[stream_idx]>>>(d_input, d_output, d_chunk_mask, d_chunk_positions, chunk_rows);
+                    cudaMemcpyAsync(h_output_data.get() + output_offset, d_output, chunk_selected_count * sizeof(float),
+                                    cudaMemcpyDeviceToHost, streams[stream_idx]);
+                    output_offset += chunk_selected_count;
+                }
+
+                cudaStreamSynchronize(streams[stream_idx]);
+                cudaFree(d_input);
+                if (d_output)
+                    cudaFree(d_output);
+                cudaFree(d_chunk_mask);
+                cudaFree(d_chunk_positions);
+            }
 
             filtered_table.data[col_idx] = h_output_data.release();
-            cudaFree(d_input);
-            cudaFree(d_output);
             break;
         }
         case DataType::DATETIME:
         {
             uint64_t *h_input_data = static_cast<uint64_t *>(input_table.data[col_idx]);
-            uint64_t *d_input = nullptr;
-            uint64_t *d_output = nullptr;
-            cudaMalloc(&d_input, row_count * sizeof(uint64_t));
-            cudaMalloc(&d_output, selected_count * sizeof(uint64_t));
             std::unique_ptr<uint64_t[], void (*)(uint64_t *)> h_output_data(
                 static_cast<uint64_t *>(malloc(selected_count * sizeof(uint64_t))),
                 [](uint64_t *ptr)
                 { free(ptr); });
+            size_t output_offset = 0;
 
-            cudaMemcpyAsync(d_input, h_input_data, row_count * sizeof(uint64_t), cudaMemcpyHostToDevice, col_streams[col_idx]);
-            copySelectedRowsKernel<uint64_t><<<blocks, threads, 0, col_streams[col_idx]>>>(d_input, d_output, d_mask, d_positions, row_count);
-            cudaMemcpyAsync(h_output_data.get(), d_output, selected_count * sizeof(uint64_t), cudaMemcpyDeviceToHost, col_streams[col_idx]);
+            for (size_t chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++)
+            {
+                size_t chunk_offset = chunk_idx * chunk_size;
+                size_t chunk_rows = std::min(chunk_size, row_count - chunk_offset);
+                size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                uint64_t *d_input = nullptr;
+                cudaMalloc(&d_input, chunk_rows * sizeof(uint64_t));
+                cudaMemcpyAsync(d_input, h_input_data + chunk_offset, chunk_rows * sizeof(uint64_t),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                bool *d_chunk_mask = nullptr;
+                cudaMalloc(&d_chunk_mask, chunk_rows * sizeof(bool));
+                cudaMemcpyAsync(d_chunk_mask, h_selected_rows.get() + chunk_offset, chunk_rows * sizeof(bool),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                unsigned int *d_chunk_positions = nullptr;
+                cudaMalloc(&d_chunk_positions, chunk_rows * sizeof(unsigned int));
+                cudaMemcpyAsync(d_chunk_positions, h_positions.data() + chunk_offset, chunk_rows * sizeof(unsigned int),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                size_t chunk_selected_count = 0;
+                for (size_t i = chunk_offset; i < chunk_offset + chunk_rows && i < row_count; i++)
+                {
+                    if (h_selected_rows[i])
+                        chunk_selected_count++;
+                }
+
+                uint64_t *d_output = nullptr;
+                if (chunk_selected_count > 0)
+                {
+                    cudaMalloc(&d_output, chunk_selected_count * sizeof(uint64_t));
+                    int threads = 256;
+                    int blocks = (chunk_rows + threads - 1) / threads;
+                    copySelectedRowsKernel<uint64_t><<<blocks, threads, 0, streams[stream_idx]>>>(d_input, d_output, d_chunk_mask, d_chunk_positions, chunk_rows);
+                    cudaMemcpyAsync(h_output_data.get() + output_offset, d_output, chunk_selected_count * sizeof(uint64_t),
+                                    cudaMemcpyDeviceToHost, streams[stream_idx]);
+                    output_offset += chunk_selected_count;
+                }
+
+                cudaStreamSynchronize(streams[stream_idx]);
+                cudaFree(d_input);
+                if (d_output)
+                    cudaFree(d_output);
+                cudaFree(d_chunk_mask);
+                cudaFree(d_chunk_positions);
+            }
 
             filtered_table.data[col_idx] = h_output_data.release();
-            cudaFree(d_input);
-            cudaFree(d_output);
             break;
         }
         case DataType::STRING:
         {
             const char **h_input_strings = static_cast<const char **>(input_table.data[col_idx]);
-            std::unique_ptr<const char *[], void (*)(const char **)>
-                h_output_strings(
-                    static_cast<const char **>(malloc(selected_count * sizeof(char *))),
-                    [](const char **ptr)
-                    { free(ptr); });
+            std::unique_ptr<const char *[], void (*)(const char **)> h_output_strings(
+                static_cast<const char **>(malloc(selected_count * sizeof(char *))),
+                [](const char **ptr)
+                { free(ptr); });
+            size_t output_offset = 0;
 
-            const char **d_input_strings = nullptr;
-            cudaMalloc(&d_input_strings, row_count * sizeof(char *));
-            cudaMemcpyAsync(d_input_strings, h_input_strings, row_count * sizeof(char *), cudaMemcpyHostToDevice, col_streams[col_idx]);
+            for (size_t chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++)
+            {
+                size_t chunk_offset = chunk_idx * chunk_size;
+                size_t chunk_rows = std::min(chunk_size, row_count - chunk_offset);
+                size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
 
-            const char **d_output_strings = nullptr;
-            cudaMalloc(&d_output_strings, selected_count * sizeof(char *));
+                const char **d_input_strings = nullptr;
+                cudaMalloc(&d_input_strings, chunk_rows * sizeof(char *));
+                cudaMemcpyAsync(d_input_strings, h_input_strings + chunk_offset, chunk_rows * sizeof(char *),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
 
-            copySelectedStringRowsKernel<<<blocks, threads, 0, col_streams[col_idx]>>>(d_input_strings, d_output_strings, d_mask, d_positions, row_count);
-            cudaMemcpyAsync(h_output_strings.get(), d_output_strings, selected_count * sizeof(char *), cudaMemcpyDeviceToHost, col_streams[col_idx]);
+                bool *d_chunk_mask = nullptr;
+                cudaMalloc(&d_chunk_mask, chunk_rows * sizeof(bool));
+                cudaMemcpyAsync(d_chunk_mask, h_selected_rows.get() + chunk_offset, chunk_rows * sizeof(bool),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                unsigned int *d_chunk_positions = nullptr;
+                cudaMalloc(&d_chunk_positions, chunk_rows * sizeof(unsigned int));
+                cudaMemcpyAsync(d_chunk_positions, h_positions.data() + chunk_offset, chunk_rows * sizeof(unsigned int),
+                                cudaMemcpyHostToDevice, streams[stream_idx]);
+
+                size_t chunk_selected_count = 0;
+                for (size_t i = chunk_offset; i < chunk_offset + chunk_rows && i < row_count; i++)
+                {
+                    if (h_selected_rows[i])
+                        chunk_selected_count++;
+                }
+
+                const char **d_output_strings = nullptr;
+                if (chunk_selected_count > 0)
+                {
+                    cudaMalloc(&d_output_strings, chunk_selected_count * sizeof(char *));
+                    int threads = 256;
+                    int blocks = (chunk_rows + threads - 1) / threads;
+                    copySelectedStringRowsKernel<<<blocks, threads, 0, streams[stream_idx]>>>(d_input_strings, d_output_strings, d_chunk_mask, d_chunk_positions, chunk_rows);
+                    cudaMemcpyAsync(h_output_strings.get() + output_offset, d_output_strings, chunk_selected_count * sizeof(char *),
+                                    cudaMemcpyDeviceToHost, streams[stream_idx]);
+                    output_offset += chunk_selected_count;
+                }
+
+                cudaStreamSynchronize(streams[stream_idx]);
+                cudaFree(d_input_strings);
+                if (d_output_strings)
+                    cudaFree(d_output_strings);
+                cudaFree(d_chunk_mask);
+                cudaFree(d_chunk_positions);
+            }
 
             filtered_table.data[col_idx] = h_output_strings.release();
-            cudaFree(d_input_strings);
-            cudaFree(d_output_strings);
             break;
         }
         default:
-            cudaStreamDestroy(prefix_stream);
-            for (auto &stream : col_streams)
+            for (auto &stream : streams)
                 cudaStreamDestroy(stream);
+            cudaStreamDestroy(prefix_stream);
             cudaFree(d_mask);
             cudaFree(d_positions);
             throw std::runtime_error("Unsupported data type: " + std::to_string(static_cast<int>(col_type)));
         }
     }
 
-    for (auto &stream : col_streams)
+    for (auto &stream : streams)
     {
         cudaStreamSynchronize(stream);
         cudaStreamDestroy(stream);

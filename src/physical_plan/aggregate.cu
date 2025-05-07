@@ -78,418 +78,645 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
     {
         return input;
     }
+
     TableResults result;
     result.row_count = 1;
-    result.column_count = this->aggregates.size();
+    result.total_rows += input.row_count;
+    result.column_count = aggregates.size();
     result.data.resize(result.column_count);
 
-    int numThreads = 256;
-    int numBlocks = (input.row_count + numThreads - 1) / numThreads;
-
-    for (size_t i = 0; i < aggregates.size(); ++i)
+    const size_t chunk_size = 10000;
+    size_t num_chunks = (input.row_count + chunk_size - 1) / chunk_size;
+    std::vector<cudaStream_t> streams(std::max<size_t>(1, num_chunks));
+    for (auto &stream : streams)
     {
-        size_t shared_mem_size = ((numThreads + 31) / 32) * getDataTypeNumBytes(input.columns[i].type);
-        ColumnInfo col;
-        col.name = getAggregateName(aggregates[i], input);
-        col.type = getOutputType(aggregates[i], input);
-        col.idx = aggregates[i].column_index;
-        result.columns.push_back(col);
+        checkCudaError(cudaStreamCreate(&stream), "Failed to create CUDA stream", __FILE__, __LINE__);
+    }
 
-        switch (aggregates[i].type)
-        {
-        /*COUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STARCOUNT_STAR*/
-        case AggregateType::COUNT_STAR:
-        {
-            result.data[i] = new float(input.row_count);
-            break;
-        }
+    std::vector<void *> allocations;
+    try
+    {
+        int numThreads = 256;
 
-            /*COUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNTCOUNT*/
-        case AggregateType::COUNT:
+        for (size_t i = 0; i < aggregates.size(); ++i)
         {
-            switch (input.columns[aggregates[i].column_index].type)
+            size_t shared_mem_size = ((numThreads + 31) / 32) * getDataTypeNumBytes(input.columns[aggregates[i].column_index].type);
+            ColumnInfo col;
+            col.name = getAggregateName(aggregates[i], input);
+            col.type = getOutputType(aggregates[i], input);
+            col.idx = aggregates[i].column_index;
+            result.columns.push_back(col);
+
+            switch (aggregates[i].type)
             {
-            case DataType::FLOAT:
+            case AggregateType::COUNT_STAR:
             {
-                float *d_input_f = nullptr;
-                float *d_output_f = nullptr;
-                cudaMalloc(&d_input_f, input.row_count * sizeof(float));
-                cudaMalloc(&d_output_f, sizeof(float));
-                cudaMemset(d_output_f, 0, sizeof(float));
-
-                cudaMemcpy(d_input_f, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(float), cudaMemcpyHostToDevice);
-
-                countElements<float><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_f, d_output_f, input.row_count);
-                cudaDeviceSynchronize();
-
-                float count_value;
-                cudaMemcpy(&count_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
-                result.data[i] = new float(count_value);
-
-                cudaFree(d_input_f);
-                cudaFree(d_output_f);
+                result.data[i] = new float(input.row_count);
                 break;
             }
-            case DataType::DATETIME:
+            case AggregateType::COUNT:
             {
-                uint64_t *d_input_ui = nullptr;
-                float *d_output_f = nullptr;
-                cudaMalloc(&d_input_ui, input.row_count * sizeof(uint64_t));
-                cudaMalloc(&d_output_f, sizeof(float));
-                cudaMemset(d_output_f, 0, sizeof(float)); // Initialize output to 0
-
-                cudaMemcpy(d_input_ui, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-                countElements<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_ui, d_output_f, input.row_count);
-                cudaDeviceSynchronize();
-
-                float count_value;
-                cudaMemcpy(&count_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
-                result.data[i] = new float(count_value);
-
-                cudaFree(d_input_ui);
-                cudaFree(d_output_f);
-                break;
-            }
-            case DataType::STRING:
-            {
-                // Allocate device memory for string pointers and output
-                char **d_input = nullptr;
-                float *d_output = nullptr;
-                cudaMalloc(&d_input, input.row_count * sizeof(char *));
-                cudaMalloc(&d_output, sizeof(float));
-                cudaMemset(d_output, 0, sizeof(float));
-
-                // First copy the host pointers to a temporary array
-                char **host_pointers = new char *[input.row_count];
-                const char **input_column = static_cast<const char **>(input.data[aggregates[i].column_index]);
-
-                // Allocate device memory for each string and copy its content
-                for (size_t j = 0; j < input.row_count; j++)
+                float total_count = 0.0f;
+                switch (input.columns[aggregates[i].column_index].type)
                 {
-                    if (input_column[j] != nullptr)
+                case DataType::FLOAT:
+                {
+                    std::vector<float> partial_counts(num_chunks, 0.0f);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
                     {
-                        size_t len = strlen(input_column[j]) + 1;
-                        cudaMalloc(&host_pointers[j], len);
-                        cudaMemcpy(host_pointers[j], input_column[j], len, cudaMemcpyHostToDevice);
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        float *d_input_f = nullptr;
+                        float *d_output_f = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_f, chunk_rows * sizeof(float)), "Failed to allocate d_input_f (FLOAT)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_f);
+                        checkCudaError(cudaMalloc(&d_output_f, sizeof(float)), "Failed to allocate d_output_f (FLOAT)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_f);
+                        checkCudaError(cudaMemsetAsync(d_output_f, 0, sizeof(float), streams[stream_idx]), "Failed to memset d_output_f (FLOAT)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaMemcpyAsync(d_input_f, static_cast<float *>(input.data[aggregates[i].column_index]) + chunk_offset,
+                                                       chunk_rows * sizeof(float), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy input to d_input_f (FLOAT)", __FILE__, __LINE__);
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        countElements<float><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_f, d_output_f, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch countElements (FLOAT)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_counts[chunk_idx], d_output_f, sizeof(float), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_f to partial_counts (FLOAT)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_input_f), "Failed to free d_input_f (FLOAT)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_f), "Failed to free d_output_f (FLOAT)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+                    for (float count : partial_counts)
+                    {
+                        total_count += count;
+                    }
+                    result.data[i] = new float(total_count);
+                    break;
+                }
+                case DataType::DATETIME:
+                {
+                    std::vector<float> partial_counts(num_chunks, 0.0f);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                    {
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        uint64_t *d_input_ui = nullptr;
+                        float *d_output_f = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_ui, chunk_rows * sizeof(uint64_t)), "Failed to allocate d_input_ui (DATETIME)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_ui);
+                        checkCudaError(cudaMalloc(&d_output_f, sizeof(float)), "Failed to allocate d_output_f (DATETIME)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_f);
+                        checkCudaError(cudaMemsetAsync(d_output_f, 0, sizeof(float), streams[stream_idx]), "Failed to memset d_output_f (DATETIME)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaMemcpyAsync(d_input_ui, static_cast<uint64_t *>(input.data[aggregates[i].column_index]) + chunk_offset,
+                                                       chunk_rows * sizeof(uint64_t), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy input to d_input_ui (DATETIME)", __FILE__, __LINE__);
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        countElements<uint64_t><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_ui, d_output_f, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch countElements (DATETIME)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_counts[chunk_idx], d_output_f, sizeof(float), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_f to partial_counts (DATETIME)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_input_ui), "Failed to free d_input_ui (DATETIME)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_f), "Failed to free d_output_f (DATETIME)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+                    for (float count : partial_counts)
+                    {
+                        total_count += count;
+                    }
+                    result.data[i] = new float(total_count);
+                    break;
+                }
+                case DataType::STRING:
+                {
+                    std::vector<float> partial_counts(num_chunks, 0.0f);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                    {
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        char **d_input = nullptr;
+                        float *d_output = nullptr;
+                        checkCudaError(cudaMalloc(&d_input, chunk_rows * sizeof(char *)), "Failed to allocate d_input (STRING)", __FILE__, __LINE__);
+                        allocations.push_back(d_input);
+                        checkCudaError(cudaMalloc(&d_output, sizeof(float)), "Failed to allocate d_output (STRING)", __FILE__, __LINE__);
+                        allocations.push_back(d_output);
+                        checkCudaError(cudaMemsetAsync(d_output, 0, sizeof(float), streams[stream_idx]), "Failed to memset d_output (STRING)", __FILE__, __LINE__);
+
+                        char **host_pointers = new char *[chunk_rows];
+                        const char **input_column = static_cast<const char **>(input.data[aggregates[i].column_index]) + chunk_offset;
+
+                        std::vector<void *> string_allocs(chunk_rows);
+                        for (size_t j = 0; j < chunk_rows; j++)
+                        {
+                            if (input_column[j])
+                            {
+                                size_t len = strlen(input_column[j]) + 1;
+                                checkCudaError(cudaMalloc(&host_pointers[j], len), "Failed to allocate host_pointers[j] (STRING)", __FILE__, __LINE__);
+                                string_allocs[j] = host_pointers[j];
+                                checkCudaError(cudaMemcpyAsync(host_pointers[j], input_column[j], len, cudaMemcpyHostToDevice, streams[stream_idx]),
+                                               "Failed to copy input_column[j] to host_pointers[j] (STRING)", __FILE__, __LINE__);
+                            }
+                            else
+                            {
+                                host_pointers[j] = nullptr;
+                            }
+                        }
+
+                        checkCudaError(cudaMemcpyAsync(d_input, host_pointers, chunk_rows * sizeof(char *), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy host_pointers to d_input (STRING)", __FILE__, __LINE__);
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        countElements<char *><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input, d_output, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch countElements (STRING)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_counts[chunk_idx], d_output, sizeof(float), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output to partial_counts (STRING)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        for (size_t j = 0; j < chunk_rows; j++)
+                        {
+                            if (host_pointers[j])
+                            {
+                                checkCudaError(cudaFree(host_pointers[j]), "Failed to free host_pointers[j] (STRING)", __FILE__, __LINE__);
+                                string_allocs[j] = nullptr;
+                            }
+                        }
+                        delete[] host_pointers;
+                        checkCudaError(cudaFree(d_input), "Failed to free d_input (STRING)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output), "Failed to free d_output (STRING)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+                    for (float count : partial_counts)
+                    {
+                        total_count += count;
+                    }
+                    result.data[i] = new float(total_count);
+                    break;
+                }
+                default:
+                    throw std::runtime_error("Unsupported data type for COUNT aggregate");
+                }
+                break;
+            }
+            case AggregateType::AVG:
+            case AggregateType::SUM:
+            {
+                if (input.columns[aggregates[i].column_index].type != DataType::FLOAT)
+                {
+                    throw std::runtime_error("SUM only supported for FLOAT");
+                }
+                float total_sum = 0.0f;
+                std::vector<float> partial_sums(num_chunks, 0.0f);
+                for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                {
+                    size_t chunk_offset = chunk_idx * chunk_size;
+                    size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                    size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                    float *d_input_f = nullptr;
+                    float *d_output_f = nullptr;
+                    checkCudaError(cudaMalloc(&d_input_f, chunk_rows * sizeof(float)), "Failed to allocate d_input_f (SUM)", __FILE__, __LINE__);
+                    allocations.push_back(d_input_f);
+                    checkCudaError(cudaMalloc(&d_output_f, sizeof(float)), "Failed to allocate d_output_f (SUM)", __FILE__, __LINE__);
+                    allocations.push_back(d_output_f);
+                    checkCudaError(cudaMemsetAsync(d_output_f, 0, sizeof(float), streams[stream_idx]), "Failed to memset d_output_f (SUM)", __FILE__, __LINE__);
+
+                    checkCudaError(cudaMemcpyAsync(d_input_f, static_cast<float *>(input.data[aggregates[i].column_index]) + chunk_offset,
+                                                   chunk_rows * sizeof(float), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                   "Failed to copy input to d_input_f (SUM)", __FILE__, __LINE__);
+
+                    int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                    findSumElement<<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_f, d_output_f, chunk_rows);
+                    checkCudaError(cudaGetLastError(), "Failed to launch findSumElement", __FILE__, __LINE__);
+                    checkCudaError(cudaMemcpyAsync(&partial_sums[chunk_idx], d_output_f, sizeof(float), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                   "Failed to copy d_output_f to partial_sums (SUM)", __FILE__, __LINE__);
+
+                    checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                    checkCudaError(cudaFree(d_input_f), "Failed to free d_input_f (SUM)", __FILE__, __LINE__);
+                    checkCudaError(cudaFree(d_output_f), "Failed to free d_output_f (SUM)", __FILE__, __LINE__);
+                    allocations.pop_back();
+                    allocations.pop_back();
+                }
+                for (float sum : partial_sums)
+                {
+                    total_sum += sum;
+                }
+                result.data[i] = new float(total_sum);
+                break;
+            }
+
+            case AggregateType::MIN:
+            {
+                switch (input.columns[aggregates[i].column_index].type)
+                {
+                case DataType::FLOAT:
+                {
+                    float min_value = FLT_MAX;
+                    std::vector<float> partial_mins(num_chunks, FLT_MAX);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                    {
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        float *d_input_f = nullptr;
+                        float *d_output_f = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_f, chunk_rows * sizeof(float)), "Failed to allocate d_input_f (MIN FLOAT)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_f);
+                        checkCudaError(cudaMalloc(&d_output_f, sizeof(float)), "Failed to allocate d_output_f (MIN FLOAT)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_f);
+                        checkCudaError(cudaMemcpyAsync(d_output_f, &partial_mins[chunk_idx], sizeof(float), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy partial_mins to d_output_f (MIN FLOAT)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaMemcpyAsync(d_input_f, static_cast<float *>(input.data[aggregates[i].column_index]) + chunk_offset,
+                                                       chunk_rows * sizeof(float), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy input to d_input_f (MIN FLOAT)", __FILE__, __LINE__);
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        findMinElement<float><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_f, d_output_f, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch findMinElement (MIN FLOAT)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_mins[chunk_idx], d_output_f, sizeof(float), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_f to partial_mins (MIN FLOAT)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_input_f), "Failed to free d_input_f (MIN FLOAT)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_f), "Failed to free d_output_f (MIN FLOAT)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+                    for (float min : partial_mins)
+                    {
+                        if (min < min_value)
+                            min_value = min;
+                    }
+                    result.data[i] = new float(min_value);
+                    break;
+                }
+                case DataType::DATETIME:
+                {
+                    uint64_t min_value = UINT64_MAX;
+                    std::vector<uint64_t> partial_mins(num_chunks, UINT64_MAX);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                    {
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        uint64_t *d_input_ui = nullptr;
+                        uint64_t *d_output_ui = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_ui, chunk_rows * sizeof(uint64_t)), "Failed to allocate d_input_ui (MIN DATETIME)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_ui);
+                        checkCudaError(cudaMalloc(&d_output_ui, sizeof(uint64_t)), "Failed to allocate d_output_ui (MIN DATETIME)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_ui);
+                        checkCudaError(cudaMemcpyAsync(d_output_ui, &partial_mins[chunk_idx], sizeof(uint64_t), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy partial_mins to d_output_ui (MIN DATETIME)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaMemcpyAsync(d_input_ui, static_cast<uint64_t *>(input.data[aggregates[i].column_index]) + chunk_offset,
+                                                       chunk_rows * sizeof(uint64_t), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy input to d_input_ui (MIN DATETIME)", __FILE__, __LINE__);
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        findMinElement<uint64_t><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_ui, d_output_ui, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch findMinElement (MIN DATETIME)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_mins[chunk_idx], d_output_ui, sizeof(uint64_t), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_ui to partial_mins (MIN DATETIME)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_input_ui), "Failed to free d_input_ui (MIN DATETIME)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_ui), "Failed to free d_output_ui (MIN DATETIME)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+                    for (uint64_t min : partial_mins)
+                    {
+                        if (min < min_value)
+                            min_value = min;
+                    }
+                    result.data[i] = new uint64_t(min_value);
+                    break;
+                }
+                case DataType::STRING:
+                {
+                    std::vector<char *> partial_mins(num_chunks, nullptr);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                    {
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        char **d_input_char = nullptr;
+                        char **d_output_char = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_char, chunk_rows * sizeof(char *)), "Failed to allocate d_input_char (MIN STRING)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_char);
+                        checkCudaError(cudaMalloc(&d_output_char, sizeof(char *)), "Failed to allocate d_output_char (MIN STRING)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_char);
+
+                        char **d_strings = new char *[chunk_rows];
+                        std::vector<void *> string_allocs(chunk_rows);
+                        const char **host_strings = static_cast<const char **>(input.data[aggregates[i].column_index]) + chunk_offset;
+
+                        for (size_t j = 0; j < chunk_rows; j++)
+                        {
+                            size_t len = strlen(host_strings[j]) + 1;
+                            checkCudaError(cudaMalloc(&d_strings[j], len), "Failed to allocate d_strings[j] (MIN STRING)", __FILE__, __LINE__);
+                            string_allocs[j] = d_strings[j];
+                            checkCudaError(cudaMemcpyAsync(d_strings[j], host_strings[j], len, cudaMemcpyHostToDevice, streams[stream_idx]),
+                                           "Failed to copy host_strings[j] to d_strings[j] (MIN STRING)", __FILE__, __LINE__);
+                            checkCudaError(cudaMemcpyAsync(&d_input_char[j], &d_strings[j], sizeof(char *), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                           "Failed to copy d_strings[j] to d_input_char[j] (MIN STRING)", __FILE__, __LINE__);
+                        }
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        findMinElement<char *><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_char, d_output_char, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch findMinElement (MIN STRING)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_mins[chunk_idx], d_output_char, sizeof(char *), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_char to partial_mins (MIN STRING)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        for (size_t j = 0; j < chunk_rows; j++)
+                        {
+                            checkCudaError(cudaFree(d_strings[j]), "Failed to free d_strings[j] (MIN STRING)", __FILE__, __LINE__);
+                            string_allocs[j] = nullptr;
+                        }
+                        delete[] d_strings;
+                        checkCudaError(cudaFree(d_input_char), "Failed to free d_input_char (MIN STRING)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_char), "Failed to free d_output_char (MIN STRING)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+
+                    char *min_string = nullptr;
+                    size_t min_len = 0;
+                    for (char *str : partial_mins)
+                    {
+                        if (!str)
+                            continue;
+                        char *temp = new char[chunk_size];
+                        size_t len = 0;
+                        char c;
+                        do
+                        {
+                            checkCudaError(cudaMemcpy(&c, str + len, 1, cudaMemcpyDeviceToHost), "Failed to copy string char (MIN STRING)", __FILE__, __LINE__);
+                            temp[len] = c;
+                            len++;
+                        } while (c != '\0' && len < chunk_size);
+                        if (!min_string || strcmp(temp, min_string) < 0)
+                        {
+                            delete[] min_string;
+                            min_string = temp;
+                            min_len = len;
+                        }
+                        else
+                        {
+                            delete[] temp;
+                        }
+                    }
+
+                    if (min_string)
+                    {
+                        char *h_output_string = new char[min_len];
+                        memcpy(h_output_string, min_string, min_len);
+                        delete[] min_string;
+                        result.data[i] = new char *[1];
+                        static_cast<char **>(result.data[i])[0] = h_output_string;
                     }
                     else
                     {
-                        host_pointers[j] = nullptr;
+                        result.data[i] = new char *[1];
+                        static_cast<char **>(result.data[i])[0] = new char[1]{'\0'};
                     }
+                    break;
                 }
-
-                // Copy the pointer array to device
-                cudaMemcpy(d_input, host_pointers, input.row_count * sizeof(char *), cudaMemcpyHostToDevice);
-
-                // Launch kernel
-                countElements<char *><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input, d_output, input.row_count);
-
-                // Get result
-                float count_value;
-                cudaMemcpy(&count_value, d_output, sizeof(float), cudaMemcpyDeviceToHost);
-                result.data[i] = new float(count_value);
-
-                // Cleanup
-                for (size_t j = 0; j < input.row_count; j++)
+                default:
+                    throw std::runtime_error("Unsupported data type for MIN aggregate");
+                }
+                break;
+            }
+            case AggregateType::MAX:
+            {
+                switch (input.columns[aggregates[i].column_index].type)
                 {
-                    if (host_pointers[j] != nullptr)
+                case DataType::FLOAT:
+                {
+                    float max_value = -FLT_MAX;
+                    std::vector<float> partial_maxs(num_chunks, -FLT_MAX);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
                     {
-                        cudaFree(host_pointers[j]);
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        float *d_input_f = nullptr;
+                        float *d_output_f = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_f, chunk_rows * sizeof(float)), "Failed to allocate d_input_f (MAX FLOAT)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_f);
+                        checkCudaError(cudaMalloc(&d_output_f, sizeof(float)), "Failed to allocate d_output_f (MAX FLOAT)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_f);
+                        checkCudaError(cudaMemcpyAsync(d_output_f, &partial_maxs[chunk_idx], sizeof(float), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy partial_maxs to d_output_f (MAX FLOAT)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaMemcpyAsync(d_input_f, static_cast<float *>(input.data[aggregates[i].column_index]) + chunk_offset,
+                                                       chunk_rows * sizeof(float), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy input to d_input_f (MAX FLOAT)", __FILE__, __LINE__);
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        findMaxElement<float><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_f, d_output_f, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch findMaxElement (MAX FLOAT)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_maxs[chunk_idx], d_output_f, sizeof(float), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_f to partial_maxs (MAX FLOAT)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_input_f), "Failed to free d_input_f (MAX FLOAT)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_f), "Failed to free d_output_f (MAX FLOAT)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
                     }
+                    for (float max : partial_maxs)
+                    {
+                        if (max > max_value)
+                            max_value = max;
+                    }
+                    result.data[i] = new float(max_value);
+                    break;
                 }
-                delete[] host_pointers;
-                cudaFree(d_input);
-                cudaFree(d_output);
+                case DataType::DATETIME:
+                {
+                    uint64_t max_value = 0;
+                    std::vector<uint64_t> partial_maxs(num_chunks, 0);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                    {
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        uint64_t *d_input_ui = nullptr;
+                        uint64_t *d_output_ui = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_ui, chunk_rows * sizeof(uint64_t)), "Failed to allocate d_input_ui (MAX DATETIME)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_ui);
+                        checkCudaError(cudaMalloc(&d_output_ui, sizeof(uint64_t)), "Failed to allocate d_output_ui (MAX DATETIME)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_ui);
+                        checkCudaError(cudaMemcpyAsync(d_output_ui, &partial_maxs[chunk_idx], sizeof(uint64_t), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy partial_maxs to d_output_ui (MAX DATETIME)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaMemcpyAsync(d_input_ui, static_cast<uint64_t *>(input.data[aggregates[i].column_index]) + chunk_offset,
+                                                       chunk_rows * sizeof(uint64_t), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                       "Failed to copy input to d_input_ui (MAX DATETIME)", __FILE__, __LINE__);
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        findMaxElement<uint64_t><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_ui, d_output_ui, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch findMaxElement (MAX DATETIME)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_maxs[chunk_idx], d_output_ui, sizeof(uint64_t), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_ui to partial_maxs (MAX DATETIME)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_input_ui), "Failed to free d_input_ui (MAX DATETIME)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_ui), "Failed to free d_output_ui (MAX DATETIME)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+                    for (uint64_t max : partial_maxs)
+                    {
+                        if (max > max_value)
+                            max_value = max;
+                    }
+                    result.data[i] = new uint64_t(max_value);
+                    break;
+                }
+                case DataType::STRING:
+                {
+                    std::vector<char *> partial_maxs(num_chunks, nullptr);
+                    for (size_t chunk_idx = 0; chunk_idx < num_chunks; ++chunk_idx)
+                    {
+                        size_t chunk_offset = chunk_idx * chunk_size;
+                        size_t chunk_rows = std::min(chunk_size, input.row_count - chunk_offset);
+                        size_t stream_idx = num_chunks > 1 ? chunk_idx : 0;
+
+                        char **d_input_char = nullptr;
+                        char **d_output_char = nullptr;
+                        checkCudaError(cudaMalloc(&d_input_char, chunk_rows * sizeof(char *)), "Failed to allocate d_input_char (MAX STRING)", __FILE__, __LINE__);
+                        allocations.push_back(d_input_char);
+                        checkCudaError(cudaMalloc(&d_output_char, sizeof(char *)), "Failed to allocate d_output_char (MAX STRING)", __FILE__, __LINE__);
+                        allocations.push_back(d_output_char);
+
+                        char **d_strings = new char *[chunk_rows];
+                        std::vector<void *> string_allocs(chunk_rows);
+                        const char **host_strings = static_cast<const char **>(input.data[aggregates[i].column_index]) + chunk_offset;
+
+                        for (size_t j = 0; j < chunk_rows; j++)
+                        {
+                            size_t len = strlen(host_strings[j]) + 1;
+                            checkCudaError(cudaMalloc(&d_strings[j], len), "Failed to allocate d_strings[j] (MAX STRING)", __FILE__, __LINE__);
+                            string_allocs[j] = d_strings[j];
+                            checkCudaError(cudaMemcpyAsync(d_strings[j], host_strings[j], len, cudaMemcpyHostToDevice, streams[stream_idx]),
+                                           "Failed to copy host_strings[j] to d_strings[j] (MAX STRING)", __FILE__, __LINE__);
+                            checkCudaError(cudaMemcpyAsync(&d_input_char[j], &d_strings[j], sizeof(char *), cudaMemcpyHostToDevice, streams[stream_idx]),
+                                           "Failed to copy d_strings[j] to d_input_char[j] (MAX STRING)", __FILE__, __LINE__);
+                        }
+
+                        int numBlocks = (chunk_rows + numThreads - 1) / numThreads;
+                        findMaxElement<char *><<<numBlocks, numThreads, shared_mem_size, streams[stream_idx]>>>(d_input_char, d_output_char, chunk_rows);
+                        checkCudaError(cudaGetLastError(), "Failed to launch findMaxElement (MAX STRING)", __FILE__, __LINE__);
+                        checkCudaError(cudaMemcpyAsync(&partial_maxs[chunk_idx], d_output_char, sizeof(char *), cudaMemcpyDeviceToHost, streams[stream_idx]),
+                                       "Failed to copy d_output_char to partial_maxs (MAX STRING)", __FILE__, __LINE__);
+
+                        checkCudaError(cudaStreamSynchronize(streams[stream_idx]), "Failed to synchronize stream", __FILE__, __LINE__);
+                        for (size_t j = 0; j < chunk_rows; j++)
+                        {
+                            checkCudaError(cudaFree(d_strings[j]), "Failed to free d_strings[j] (MAX STRING)", __FILE__, __LINE__);
+                            string_allocs[j] = nullptr;
+                        }
+                        delete[] d_strings;
+                        checkCudaError(cudaFree(d_input_char), "Failed to free d_input_char (MAX STRING)", __FILE__, __LINE__);
+                        checkCudaError(cudaFree(d_output_char), "Failed to free d_output_char (MAX STRING)", __FILE__, __LINE__);
+                        allocations.pop_back();
+                        allocations.pop_back();
+                    }
+
+                    char *max_string = nullptr;
+                    size_t max_len = 0;
+                    for (char *str : partial_maxs)
+                    {
+                        if (!str)
+                            continue;
+                        char *temp = new char[chunk_size];
+                        size_t len = 0;
+                        char c;
+                        do
+                        {
+                            checkCudaError(cudaMemcpy(&c, str + len, 1, cudaMemcpyDeviceToHost), "Failed to copy string char (MAX STRING)", __FILE__, __LINE__);
+                            temp[len] = c;
+                            len++;
+                        } while (c != '\0' && len < chunk_size);
+                        if (!max_string || strcmp(temp, max_string) > 0)
+                        {
+                            delete[] max_string;
+                            max_string = temp;
+                            max_len = len;
+                        }
+                        else
+                        {
+                            delete[] temp;
+                        }
+                    }
+
+                    if (max_string)
+                    {
+                        char *h_output_string = new char[max_len];
+                        memcpy(h_output_string, max_string, max_len);
+                        delete[] max_string;
+                        result.data[i] = new char *[1];
+                        static_cast<char **>(result.data[i])[0] = h_output_string;
+                    }
+                    else
+                    {
+                        result.data[i] = new char *[1];
+                        static_cast<char **>(result.data[i])[0] = new char[1]{'\0'};
+                    }
+                    break;
+                }
+                default:
+                    throw std::runtime_error("Unsupported data type for MAX aggregate");
+                }
                 break;
             }
             default:
-                throw std::runtime_error("Unsupported data type for Count aggregate");
+                throw std::runtime_error("Unsupported aggregate type");
             }
         }
-        break;
-            /*SUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUMSUM*/
-        case AggregateType::SUM:
-            if (input.columns[aggregates[i].column_index].type == DataType::FLOAT)
-            {
-                float *h_input = static_cast<float *>(input.data[aggregates[i].column_index]);
 
-                float *d_input_f = nullptr, *d_output_f = nullptr;
-                cudaMalloc(&d_input_f, input.row_count * sizeof(float));
-                cudaMalloc(&d_output_f, sizeof(float));
-
-                cudaMemcpy(d_input_f, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(float), cudaMemcpyHostToDevice);
-
-                findSumElement<<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_f, d_output_f, input.row_count);
-
-                cudaDeviceSynchronize();
-                float f_value;
-
-                cudaMemcpy(&f_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
-                std::cout << "sum value: " << f_value << std::endl;
-                result.data[i] = new float(f_value);
-
-                cudaFree(d_input_f);
-                cudaFree(d_output_f);
-            }
-            break;
-            /*AVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVGAVG*/
-        case AggregateType::AVG:
-            if (input.columns[aggregates[i].column_index].type == DataType::FLOAT)
-            {
-                float *h_input = static_cast<float *>(input.data[aggregates[i].column_index]);
-
-                float *d_input_f = nullptr, *d_output_f = nullptr;
-                cudaMalloc(&d_input_f, input.row_count * sizeof(float));
-                cudaMalloc(&d_output_f, sizeof(float));
-
-                cudaMemcpy(d_input_f, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(float), cudaMemcpyHostToDevice);
-
-                findSumElement<<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_f, d_output_f, input.row_count);
-
-                cudaDeviceSynchronize();
-                float f_value;
-
-                cudaMemcpy(&f_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
-                f_value /= input.row_count;
-                std::cout << "AVG value: " << f_value << std::endl;
-                result.data[i] = new float(f_value);
-
-                cudaFree(d_input_f);
-                cudaFree(d_output_f);
-            }
-            break;
-            /*MINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMINMIN*/
-        case AggregateType::MIN:
-            switch (input.columns[aggregates[i].column_index].type)
-            {
-            case DataType::FLOAT:
-            {
-                float *h_input = static_cast<float *>(input.data[aggregates[i].column_index]);
-
-                float *d_input_f = nullptr, *d_output_f = nullptr;
-                cudaMalloc(&d_input_f, input.row_count * sizeof(float));
-                cudaMalloc(&d_output_f, sizeof(float));
-
-                float init_val = FLT_MAX;
-                cudaMemcpy(d_output_f, &init_val, sizeof(float), cudaMemcpyHostToDevice);
-
-                cudaMemcpy(d_input_f, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(float), cudaMemcpyHostToDevice);
-
-                findMinElement<float><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_f, d_output_f, input.row_count);
-
-                cudaDeviceSynchronize();
-                float f_value;
-
-                cudaMemcpy(&f_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
-                std::cout << "Min value: " << f_value << std::endl;
-                result.data[i] = new float(f_value);
-
-                cudaFree(d_input_f);
-                cudaFree(d_output_f);
-                break;
-            }
-            case DataType::DATETIME:
-            {
-
-                uint64_t *d_input_ui = nullptr, *d_output_ui = nullptr;
-                cudaMalloc(&d_input_ui, input.row_count * sizeof(uint64_t));
-                cudaMalloc(&d_output_ui, sizeof(uint64_t));
-
-                uint64_t init_val = UINT64_MAX;
-                std::cout << "init_val: " << init_val << std::endl;
-                cudaMemcpy(d_output_ui, &init_val, sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-                cudaMemcpy(d_input_ui, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-                findMinElement<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_ui, d_output_ui, input.row_count);
-
-                uint64_t datetime_value;
-                cudaMemcpy(&datetime_value, d_output_ui, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-                std::cout << "MIN datetime value: " << datetime_value << std::endl;
-                result.data[i] = new uint64_t(datetime_value);
-
-                cudaFree(d_input_ui);
-                cudaFree(d_output_ui);
-                break;
-            }
-            case DataType::STRING:
-            {
-                char **d_input_char = nullptr, **d_output_char = nullptr;
-                cudaMalloc(&d_input_char, input.row_count * sizeof(char *));
-                cudaMalloc(&d_output_char, sizeof(char *));
-
-                char **d_strings = new char *[input.row_count];
-                const char **host_strings = static_cast<const char **>(input.data[aggregates[i].column_index]);
-
-                for (size_t j = 0; j < input.row_count; j++)
-                {
-                    size_t len = strlen(host_strings[j]) + 1;
-                    cudaMalloc(&d_strings[j], len);
-                    cudaMemcpy(d_strings[j], host_strings[j], len, cudaMemcpyHostToDevice);
-                    cudaMemcpy(&d_input_char[j], &d_strings[j], sizeof(char *), cudaMemcpyHostToDevice);
-                }
-
-                findMinElement<char *><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_char, d_output_char, input.row_count);
-                cudaDeviceSynchronize();
-
-                char *d_max_string = nullptr;
-                cudaMemcpy(&d_max_string, d_output_char, sizeof(char *), cudaMemcpyDeviceToHost);
-
-                size_t max_len = 0;
-                if (d_max_string)
-                {
-                    char temp_char;
-                    size_t offset = 0;
-                    do
-                    {
-                        cudaMemcpy(&temp_char, d_max_string + offset, 1, cudaMemcpyDeviceToHost);
-                        offset++;
-                    } while (temp_char != '\0');
-                    max_len = offset;
-                }
-
-                // Allocate host memory for the result string
-                char *h_output_string = new char[max_len];
-                cudaMemcpy(h_output_string, d_max_string, max_len, cudaMemcpyDeviceToHost);
-                // std::cout << "Max string: " << h_output_string << std::endl;
-
-                result.data[i] = new char *[1];
-                static_cast<char **>(result.data[i])[0] = h_output_string;
-                std::cout << "MIN string: " << static_cast<char **>(result.data[i])[0] << std::endl;
-                // result.print();
-                // Cleanup
-                for (size_t j = 0; j < input.row_count; j++)
-                {
-                    cudaFree(d_strings[j]);
-                }
-                delete[] d_strings;
-                cudaFree(d_input_char);
-                cudaFree(d_output_char);
-                break;
-            }
-            default:
-                throw std::runtime_error("Unsupported data type for MAX aggregate");
-            }
-            break;
-        /* MAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAXMAX*/
-        case AggregateType::MAX:
-            switch (input.columns[aggregates[i].column_index].type)
-            {
-            case DataType::FLOAT:
-            {
-                float *d_input_f = nullptr, *d_output_f = nullptr;
-                cudaMalloc(&d_input_f, input.row_count * sizeof(float));
-                cudaMalloc(&d_output_f, sizeof(float));
-                cudaMemcpy(d_input_f, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(float), cudaMemcpyHostToDevice);
-
-                findMaxElement<float><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_f, d_output_f, input.row_count);
-
-                float f_value;
-                cudaDeviceSynchronize();
-                cudaMemcpy(&f_value, d_output_f, sizeof(float), cudaMemcpyDeviceToHost);
-                result.data[i] = new float(f_value);
-
-                cudaFree(d_input_f);
-                cudaFree(d_output_f);
-                break;
-            }
-            case DataType::DATETIME:
-            {
-                uint64_t *d_input_ui = nullptr, *d_output_ui = nullptr;
-                cudaMalloc(&d_input_ui, input.row_count * sizeof(uint64_t));
-                cudaMalloc(&d_output_ui, sizeof(uint64_t));
-                cudaMemcpy(d_input_ui, input.data[aggregates[i].column_index],
-                           input.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
-
-                findMaxElement<uint64_t><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_ui, d_output_ui, input.row_count);
-
-                uint64_t datetime_value;
-                cudaMemcpy(&datetime_value, d_output_ui, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-                result.data[i] = new uint64_t(datetime_value);
-
-                cudaFree(d_input_ui);
-                cudaFree(d_output_ui);
-                break;
-            }
-            case DataType::STRING:
-            {
-                char **d_input_char = nullptr, **d_output_char = nullptr;
-                cudaMalloc(&d_input_char, input.row_count * sizeof(char *));
-                cudaMalloc(&d_output_char, sizeof(char *));
-
-                char **d_strings = new char *[input.row_count];
-                const char **host_strings = static_cast<const char **>(input.data[aggregates[i].column_index]);
-
-                for (size_t j = 0; j < input.row_count; j++)
-                {
-                    size_t len = strlen(host_strings[j]) + 1;
-                    cudaMalloc(&d_strings[j], len);
-                    cudaMemcpy(d_strings[j], host_strings[j], len, cudaMemcpyHostToDevice);
-                    cudaMemcpy(&d_input_char[j], &d_strings[j], sizeof(char *), cudaMemcpyHostToDevice);
-                }
-
-                findMaxElement<char *><<<numBlocks, numThreads, shared_mem_size>>>(
-                    d_input_char, d_output_char, input.row_count);
-                cudaDeviceSynchronize();
-
-                char *d_max_string = nullptr;
-                cudaMemcpy(&d_max_string, d_output_char, sizeof(char *), cudaMemcpyDeviceToHost);
-
-                size_t max_len = 0;
-                if (d_max_string)
-                {
-                    char temp_char;
-                    size_t offset = 0;
-                    do
-                    {
-                        cudaMemcpy(&temp_char, d_max_string + offset, 1, cudaMemcpyDeviceToHost);
-                        offset++;
-                    } while (temp_char != '\0');
-                    max_len = offset;
-                }
-
-                // Allocate host memory for the result string
-                char *h_output_string = new char[max_len];
-                cudaMemcpy(h_output_string, d_max_string, max_len, cudaMemcpyDeviceToHost);
-                // std::cout << "Max string: " << h_output_string << std::endl;
-
-                result.data[i] = new char *[1];
-                static_cast<char **>(result.data[i])[0] = h_output_string;
-                std::cout << "Max string: " << static_cast<char **>(result.data[i])[0] << std::endl;
-                // result.print();
-                // Cleanup
-                for (size_t j = 0; j < input.row_count; j++)
-                {
-                    cudaFree(d_strings[j]);
-                }
-                delete[] d_strings;
-                cudaFree(d_input_char);
-                cudaFree(d_output_char);
-                break;
-            }
-            default:
-                throw std::runtime_error("Unsupported data type for MAX aggregate");
-            }
-            break;
+        for (auto &stream : streams)
+        {
+            checkCudaError(cudaStreamSynchronize(stream), "Failed to synchronize stream", __FILE__, __LINE__);
+            checkCudaError(cudaStreamDestroy(stream), "Failed to destroy CUDA stream", __FILE__, __LINE__);
         }
+        allocations.clear();
+    }
+    catch (...)
+    {
+        for (auto ptr : allocations)
+        {
+            if (ptr)
+                cudaFree(ptr);
+        }
+        for (auto &stream : streams)
+        {
+            cudaStreamDestroy(stream);
+        }
+        throw;
     }
 
     return result;
@@ -688,6 +915,26 @@ void Aggregate::updateAggregates(const TableResults &input)
     }
 }
 
+void Aggregate::finalizeAggregates(TableResults &result) const
+{
+    std::cout << "Finalizing aggregates with total_rows: " << result.total_rows << "\n";
+
+    for (size_t i = 0; i < aggregates.size(); ++i)
+    {
+        switch (aggregates[i].type)
+        {
+        case AggregateType::AVG:
+            if (result.data[i])
+            {
+                float h_intermediate_avg = static_cast<float *>(result.data[i])[0];
+                static_cast<float *>(result.data[i])[0] = h_intermediate_avg / result.total_rows;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+}
 void Aggregate::print() const
 {
     std::cout << "UNGROUPED_AGGREGATE (";

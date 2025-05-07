@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 #include <regex>
 #include <cctype>
+
 struct Condition
 {
     std::string column;

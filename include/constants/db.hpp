@@ -49,6 +49,7 @@ public:
     size_t column_count = 0;
     bool has_more = true;
     size_t batch_index = 0;
+    size_t total_rows = 0;
 
     size_t estimateMemorySize() const
     {

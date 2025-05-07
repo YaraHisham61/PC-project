@@ -65,7 +65,7 @@ int main()
     // std::string query = "SELECT COUNT(name) FROM Student;";
     // id(N)(P), completion_date(D), longitude(N), total(N)
 
-    std::string query = "SELECT * FROM Student WHERE id > 500 AND year > 2019; ";
+    std::string query = "SELECT avg(id) , sum(id) FROM table_1; ";
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT count(*) ,count(name) FROM Student;";
     // std::string query = "SELECT t1.id , t5.table_1_id , t4.table_1_id FROM  table_1 t1 , table_5 t5, table_4 t4 where t1.id = t5.table_1_id and t1.id = t4.table_1_id and t1.id >8000";
@@ -104,7 +104,7 @@ int main()
     // // result->Print();
 
     profiler.start("GPU Execution");
-    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 10000);
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 1000000);
     // printPhysicalPlan(&(physical_plan.get()->Root()));
     profiler.stop("GPU Execution");
 

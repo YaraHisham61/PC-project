@@ -5,12 +5,26 @@
 #include <memory>
 #include <iostream>
 #include <future>
-#include <stdexcept>
 #include "duckdb.hpp"
 #include "constants/db.hpp"
 #include "dbms/csv_importer.hpp"
-#include <mutex>
+#include <cuda_runtime.h>
+#include <sstream>
+#include <stdexcept>
+#include <string>
 
+namespace
+{
+    static void checkCudaError(cudaError_t err, const char *msg, const char *file, int line)
+    {
+        if (err != cudaSuccess)
+        {
+            std::stringstream ss;
+            ss << msg << ": " << cudaGetErrorString(err) << " at " << file << ":" << line;
+            throw std::runtime_error(ss.str());
+        }
+    }
+}
 class PhysicalOpNode
 {
 public:

@@ -155,7 +155,7 @@ void CSVImporter::process_column_token(std::string token, std::vector<ColumnInfo
     {
         std::string type_info = token.substr(paren_start + 1, paren_end - paren_start - 1);
         col.type = map_column_type(type_info);
-        col.is_primary = token.find('P') != std::string::npos;
+        col.is_primary = token.find("(P)") != std::string::npos;
         col.idx = idx;
     }
     else
@@ -169,11 +169,11 @@ void CSVImporter::process_column_token(std::string token, std::vector<ColumnInfo
 
 DataType CSVImporter::map_column_type(const std::string &type_info) const
 {
-    if (type_info.find('N') != std::string::npos)
+    if (type_info.find("N") != std::string::npos)
     {
         return DataType::FLOAT;
     }
-    else if (type_info.find('D') != std::string::npos)
+    else if (type_info.find("D") != std::string::npos)
     {
         return DataType::DATETIME;
     }

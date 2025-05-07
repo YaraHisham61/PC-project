@@ -65,7 +65,9 @@ int main()
     // std::string query = "SELECT COUNT(name) FROM Student;";
     // id(N)(P), completion_date(D), longitude(N), total(N)
 
-    std::string query = "SELECT avg(id) , sum(id) FROM table_1; ";
+    // std::string query = "SELECT id FROM table_1 ORDER BY id; ";
+    std::string query = "SELECT AVG(e.Salary) AS AverageSalary FROM Employees e,SalesOrders s WHERE e.Employees_id = s.Employees_id AND s.TotalAmount > 200; ";
+
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT count(*) ,count(name) FROM Student;";
     // std::string query = "SELECT t1.id , t5.table_1_id , t4.table_1_id FROM  table_1 t1 , table_5 t5, table_4 t4 where t1.id = t5.table_1_id and t1.id = t4.table_1_id and t1.id >8000";
@@ -86,7 +88,7 @@ int main()
 
     // std::cout << "Physical plan:\n";
 
-    // std::cout << physical_plan.get()->Root().ToString() << std::endl;
+    std::cout << physical_plan.get()->Root().ToString() << std::endl;
 
     // profiler.start("CPU Execution");
     // std::string csv_file = std::string(DATA_DIR) + "table_1.csv";

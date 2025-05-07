@@ -11,8 +11,8 @@ HashJoin::HashJoin(const duckdb::InsertionOrderPreservingMap<std::string> &param
             col_table_left = it->second.substr(0, pos - 1);
             col_table_right = it->second.substr(pos + 2);
         }
-        std::cout << "col_table_left: " << col_table_left << std::endl;
-        std::cout << "col_table_right: " << col_table_right << std::endl;
+        // std::cout << "col_table_left: " << col_table_left << std::endl;
+        // std::cout << "col_table_right: " << col_table_right << std::endl;
     }
 }
 
@@ -143,7 +143,7 @@ void HashJoin::getIndexOfSelectedRows(const TableResults &left_table, const Tabl
     unsigned long long h_count = 0;
     cudaMemcpy(&h_count, d_count, sizeof(unsigned long long), cudaMemcpyDeviceToHost);
 
-    left_indices.resize(h_count); 
+    left_indices.resize(h_count);
     right_indices.resize(h_count);
 
     cudaMemcpy(left_indices.data(), d_left_idx, h_count * sizeof(size_t),
@@ -157,6 +157,13 @@ void HashJoin::getIndexOfSelectedRows(const TableResults &left_table, const Tabl
 }
 TableResults HashJoin::executeJoin(const TableResults &left_table, const TableResults &right_table)
 {
+    if (left_table.row_count == 0 || right_table.row_count == 0)
+    {
+        TableResults result;
+        result.row_count = 0;
+        result.has_more = false;
+        return result;
+    }
     std::vector<size_t> left_indices(left_table.row_count);
     std::vector<size_t> right_indices(right_table.row_count);
     getIndexOfSelectedRows(left_table, right_table, left_indices, right_indices);

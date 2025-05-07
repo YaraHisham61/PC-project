@@ -291,7 +291,7 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
     filtered_table.batch_index = input_table.batch_index;
     filtered_table.data.resize(input_table.column_count);
 
-    const size_t chunk_size = 10000;
+    const size_t chunk_size =10000 ;
     size_t num_chunks = (row_count + chunk_size - 1) / chunk_size;
     std::vector<cudaStream_t> streams(std::max<size_t>(1, num_chunks));
     for (auto &stream : streams)

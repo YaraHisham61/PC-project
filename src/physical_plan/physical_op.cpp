@@ -70,7 +70,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
             std::cerr << "Error: Missing input tables for join\n";
             return nullptr;
         }
-
+ 
         TableResults join_result = join_ptr->executeJoin(*left_table_ptr, *right_table_ptr);
         // join_result.print();
         // delete left_table_ptr;

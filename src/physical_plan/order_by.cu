@@ -45,10 +45,7 @@ std::vector<size_t> OrderBy::getSortedIndex(const TableResults &input_table)
     {
         h_indices[i] = i;
     }
-    // for (int i = 0; i < n; i++)
-    // {
-    //     std::cout << h_indices[i] << " ";
-    // }
+
     cudaMemcpy(d_indices, h_indices, n * sizeof(size_t), cudaMemcpyHostToDevice);
     delete[] h_indices;
 
@@ -151,11 +148,6 @@ std::vector<size_t> OrderBy::getSortedIndex(const TableResults &input_table)
     cudaFree(d_indices);
     cudaFree(d_indicesTmp);
 
-    // for (size_t i = 0; i < n; i++)
-    // {
-    //     std::cout << sorted_indices[i] << " ";
-    // }
-
     return sorted_indices;
 }
 
@@ -165,6 +157,7 @@ TableResults OrderBy::executeOrderBy(const TableResults &input_table)
 
     TableResults result;
     result.column_count = input_table.columns.size();
+    result.has_more = input_table.has_more;
     result.row_count = sorted_indices.size();
     result.columns = input_table.columns;
     result.data.resize(input_table.columns.size());

@@ -6,6 +6,30 @@
 #include "physical_plan/physical_op.hpp"
 #include "duckdb/execution/executor.hpp"
 #include <memory>
+
+std::string readQueryFromFile(const std::string &filename)
+{
+    std::ifstream inputFile(filename);
+    if (!inputFile.is_open())
+    {
+        throw std::runtime_error("Error opening file: " + filename);
+    }
+
+    std::string query;
+    std::string line;
+
+    while (std::getline(inputFile, line))
+    {
+        if (!query.empty())
+        {
+            query += " ";
+        }
+        query += line;
+    }
+
+    inputFile.close();
+    return query;
+}
 void printPhysicalPlan(duckdb::PhysicalOperator *node, int depth = 0)
 {
     if (!node)
@@ -71,10 +95,13 @@ int main()
     // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
     // std::string query = "SELECT count(*) ,count(name) FROM Student;";
     // std::string query = "SELECT t1.id , t5.table_1_id , t4.table_1_id FROM  table_1 t1 , table_5 t5, table_4 t4 where t1.id = t5.table_1_id and t1.id = t4.table_1_id and t1.id >8000";
-    std::string query = "SELECT * FROM  table_1 t1 , table_4 t4 WHERE t1.id= t4.table_1_id;";
+    // std::string query = "SELECT * FROM  table_1 t1 , table_4 t4 WHERE t1.id= t4.table_1_id;";
     // std::string query = "SELECT * FROM  table1 t4 , table4 t1 WHERE t4.id= t1.table_1_id and t1.last_modified = t4.completion_date;";
 
     // std::string query = "SELECT id,year,name,name FROM Student;";
+    std::string query_file = std::string(DATA_DIR) + "query1.txt";
+    std::string query = readQueryFromFile(query_file);
+
     profiler.start("Get Logical Plan");
     auto logical_plan = duckdb_interface.getLogicalPlan(query);
     profiler.stop("Get Logical Plan");
@@ -86,9 +113,9 @@ int main()
     auto physical_plan = physical_plan_generator.Plan(logical_plan->Copy(*con.context));
     profiler.stop("Get Physical Plan");
 
-    // std::cout << "Physical plan:\n";
+    std::cout << "Physical plan:\n";
 
-    // std::cout << physical_plan.get()->Root().ToString() << std::endl;
+    std::cout << physical_plan.get()->Root().ToString() << std::endl;
 
     profiler.start("CPU Execution");
     std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
@@ -109,8 +136,15 @@ int main()
     std::cout << "Result:\n";
     std::cout << result->RowCount() << "\n";
 
+    profiler.start("CPU Execution");
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 50000);
+    // printPhysicalPlan(&(physical_plan.get()->Root()));
+    profiler.stop("CPU Execution");
+
+
+    
     profiler.start("GPU Execution");
-    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 10000);
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 50000);
     // printPhysicalPlan(&(physical_plan.get()->Root()));
     profiler.stop("GPU Execution");
 

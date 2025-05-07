@@ -10,7 +10,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
     DB *data_base,
     TableResults **input_table_ptr,
-    size_t batch_index, size_t batch_size)
+    size_t batch_index, size_t batch_size, size_t batch_index_right, bool *is_join, bool *end_right)
 {
     if (!op)
     {
@@ -42,6 +42,8 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
     else if (op_name == "HASH_JOIN")
     {
+        // (*input_table_ptr)->is_join = true;
+
         node = std::make_unique<HashJoin>(params);
     }
     else if (op_name == "ORDER_BY")
@@ -52,44 +54,60 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     if (op_name == "HASH_JOIN")
     {
         auto *join_ptr = static_cast<HashJoin *>(node.get());
-
+        *is_join = true;
         TableResults *left_table_ptr = nullptr;
-        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size);
-
-        // Process right child
-        TableResults *right_table_ptr = nullptr;
-        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index, batch_size);
+        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right);
+        if (left_table_ptr->row_count == 0)
+        {
+            return node;
+        }
 
         if (left_child)
             node->children.push_back(std::move(left_child));
+
+        TableResults *right_table_ptr = nullptr;
+        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index_right, batch_size, batch_index_right, is_join, end_right);
+
         if (right_child)
             node->children.push_back(std::move(right_child));
-
         if (!left_table_ptr || !right_table_ptr)
         {
             std::cerr << "Error: Missing input tables for join\n";
             return nullptr;
         }
-
         TableResults join_result = join_ptr->executeJoin(*left_table_ptr, *right_table_ptr);
-        // join_result.print();
-        // delete left_table_ptr;
-        // delete right_table_ptr;
-
         if (*input_table_ptr)
         {
             **input_table_ptr = std::move(join_result);
+
+            (*input_table_ptr)->is_join = true;
+            if (right_table_ptr->has_more == false)
+            {
+                *end_right = true;
+            }
+            else
+            {
+                *end_right = false;
+            }
         }
         else
         {
             *input_table_ptr = new TableResults(std::move(join_result));
+            (*input_table_ptr)->is_join = true;
+            if (right_table_ptr->has_more == false)
+            {
+                *end_right = true;
+            }
+            else
+            {
+                *end_right = false;
+            }
         }
-
         return node;
     }
     for (auto &child : op->children)
     {
-        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size);
+        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right);
         if (child_node && !child_node->params.empty())
         {
             node->children.push_back(std::move(child_node));
@@ -179,7 +197,9 @@ void PhysicalOpNode::executePlanInBatches(
 {
     TableResults *current_batch = nullptr;
     size_t batch_index = 0;
+    size_t batch_index_right = 0;
     size_t total_rows = 0;
+
     bool is_aggregate = (op->GetName() == "UNGROUPED_AGGREGATE");
     // bool is_order_by = (op->GetName() == "ORDER_BY");
     // std::vector<TableResults> order_by_batches; // For OrderBy merging
@@ -194,12 +214,13 @@ void PhysicalOpNode::executePlanInBatches(
     // {
     //     order_by_op = std::make_unique<OrderBy>(op->ParamsToString());
     // }
-
+    bool is_join = false;
+    bool end_right = false;
     while (true)
     {
         current_batch = nullptr;
 
-        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size);
+        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right);
 
         if (!current_batch)
         {
@@ -220,6 +241,9 @@ void PhysicalOpNode::executePlanInBatches(
         {
             if (current_batch->row_count != 0)
             {
+                current_batch->is_join = is_join;
+                current_batch->end_right = end_right;
+                // current_batch->batch_index = batch_index;
                 current_batch->write_to_file();
             }
             // current_batch->print();
@@ -227,7 +251,24 @@ void PhysicalOpNode::executePlanInBatches(
 
         if (!current_batch->has_more)
             break;
-        batch_index++;
+        if (current_batch->is_join)
+        {
+            batch_index_right++;
+            current_batch->batch_index_right = batch_index_right;
+            if (current_batch->end_right == true)
+            {
+                current_batch->end_right = false;
+                end_right = false;
+                batch_index_right = 0;
+                batch_index++;
+                current_batch->batch_index = batch_index;
+                current_batch->batch_index_right = batch_index_right;
+            }
+        }
+        else
+        {
+            batch_index++;
+        }
         current_batch->batch_index = batch_index;
     }
 

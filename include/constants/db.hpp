@@ -10,7 +10,8 @@
 
 // Struct for column metadata
 
-#define DATA_DIR "/mnt/e/Collage/PC - Parallel Computing/Project/dbms/data/"
+// #define DATA_DIR "/mnt/e/Collage/PC - Parallel Computing/Project/dbms/data/"
+#define DATA_DIR "/mnt/c/Users/LENOVE/Desktop/second term 4/p/PC-project/data/"
 
 struct ColumnInfo
 {
@@ -48,7 +49,10 @@ public:
     size_t row_count = 0;
     size_t column_count = 0;
     bool has_more = true;
+    bool is_join = false;
+    bool end_right = false;
     size_t batch_index = 0;
+    size_t batch_index_right = 0;
     size_t total_rows = 0;
 
     size_t estimateMemorySize() const
@@ -134,7 +138,7 @@ public:
         }
 
         // Write column headers only if it's the first batch
-        if (this->batch_index == 0 || is_file_empty(filename))
+        if (is_file_empty(filename))
         {
             // Write column headers
             for (size_t col = 0; col < column_count; ++col)
@@ -183,6 +187,7 @@ public:
         file.close();
         // std::cout << "Data appended to file: " << filename << "\n";
     }
+    
     void write_aggregate_to_file()
     {
         std::string filename = std::string(DATA_DIR) + "output.txt";

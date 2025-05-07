@@ -7,7 +7,11 @@ OrderBy::OrderBy(const duckdb::InsertionOrderPreservingMap<std::string> &params)
     {
         // memory.main.table_1.id
         std::string text = it->second;
-        text = text.substr(12);
+        if (text.substr(0, 12) == "memory.main.")
+        {
+            text = text.substr(12);
+        }
+        
         size_t pos = text.find('.');
         size_t pos2 = text.find(' ', pos);
         if (pos != std::string::npos && pos2 != std::string::npos)

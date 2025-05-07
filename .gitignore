@@ -10,3 +10,8 @@ build/
 *./vendor/duckdb
 data/*.csv
 *.csv
+data/table_1.csv
+data/table_2.csv
+data/table_3.csv
+data/table_5.csv
+data/table_1.csv

@@ -116,7 +116,7 @@ public:
         std::cout << "Total Columns: " << column_count << "\n";
         std::cout << "---------------------------------\n";
     }
-    bool is_file_empty(const std::string &filename)
+    bool is_file_empty(const std::string &filename) const
     {
         std::ifstream in_file(filename, std::ios::binary | std::ios::ate);
         if (!in_file.is_open())
@@ -127,7 +127,7 @@ public:
         in_file.close();
         return size == 0;
     }
-    void write_to_file()
+    void write_to_file() const
     {
         std::string filename = std::string(DATA_DIR) + "output.csv";
         std::ofstream file(filename, std::ios::app); // Open file in append mode

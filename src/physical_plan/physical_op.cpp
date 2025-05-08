@@ -6,6 +6,8 @@
 #include "physical_plan/aggregate.hpp"
 #include "physical_plan/order_by.hpp"
 #include "dbms/profiler.hpp"
+#include <future>
+#include <vector>
 
 std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
@@ -218,7 +220,13 @@ void PhysicalOpNode::executePlanInBatches(
 
     bool is_aggregate = (op->GetName() == "UNGROUPED_AGGREGATE");
     bool is_order_by = (op->GetName() == "ORDER_BY");
-    std::vector<TableResults> order_by_batches; // For OrderBy merging
+    std::vector<TableResults> order_by_batches;   // For OrderBy merging
+    std::vector<std::future<void>> write_futures; // For async file writes
+
+    // Memory threshold for OrderBy (in bytes)
+    const size_t MEMORY_THRESHOLD = 100 * 1024 * 1024; // 100MB
+    size_t current_memory_usage = 0;
+    bool using_intermediate_files = false;
 
     std::unique_ptr<Aggregate> aggregate_op;
     std::unique_ptr<OrderBy> order_by_op;
@@ -236,9 +244,7 @@ void PhysicalOpNode::executePlanInBatches(
     while (true)
     {
         current_batch = nullptr;
-        profiler.start("JOIN");
         auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU);
-        profiler.stop("JOIN");
         current_batch->is_join = is_join;
         current_batch->end_right = end_right;
         if (!current_batch)
@@ -262,16 +268,36 @@ void PhysicalOpNode::executePlanInBatches(
         }
         else if (is_order_by)
         {
-            order_by_batches.push_back(*current_batch);
+
+            current_memory_usage += current_batch->estimateMemorySize();
+
+            if (current_memory_usage > MEMORY_THRESHOLD && !using_intermediate_files)
+            {
+                order_by_op->write_intermideate(order_by_batches);
+                order_by_batches.clear();
+                current_memory_usage = 0;
+                using_intermediate_files = true;
+                std::cout << "Using intermediate files\n";
+            }
+
+            if (using_intermediate_files)
+            {
+                std::vector<TableResults> single_batch = {*current_batch};
+                order_by_op->write_intermideate(single_batch);
+            }
+            else
+            {
+                order_by_batches.push_back(*current_batch);
+            }
         }
         else
         {
-
-            // current_batch->batch_index = batch_index;
             if (current_batch->row_count != 0)
             {
-                current_batch->write_to_file();
-                std::cout << "Batch " << batch_index << "   " << current_batch->row_count << ":\n";
+                TableResults batch_copy = *current_batch; // Copy to avoid data race
+                write_futures.push_back(std::async(std::launch::async, [batch_copy]()
+                                                   { batch_copy.write_to_file(); }));
+                std::cout << "Batch " << batch_index << " DONE" << ":\n";
             }
         }
 
@@ -304,13 +330,29 @@ void PhysicalOpNode::executePlanInBatches(
         aggregate_op->intermidiate_results->total_rows = total_rows;
         aggregate_op->finalizeAggregates(*aggregate_op->intermidiate_results);
         aggregate_op->intermidiate_results->write_to_file();
-        // aggregate_op->intermidiate_results->print();
     }
     else if (is_order_by)
     {
-        TableResults final_result = order_by_op->mergeSortedBatchesOnGPU(order_by_batches);
-        final_result.write_to_file();
-        // final_result.print();
+        TableResults final_result;
+        if (using_intermediate_files)
+        {
+            final_result = order_by_op->merge_sorted_files();
+        }
+        else
+        {
+            final_result = order_by_op->mergeSortedBatchesOnGPU(order_by_batches);
+        }
+
+        // Write final result
+        TableResults batch_copy = final_result; // Copy for async write
+        write_futures.push_back(std::async(std::launch::async, [batch_copy]()
+                                           { batch_copy.write_to_file(); }));
+    }
+
+    // Wait for all async writes to complete
+    for (auto &future : write_futures)
+    {
+        future.wait();
     }
 
     delete current_batch;

@@ -479,3 +479,188 @@ void OrderBy::print() const
 {
     // std::cout << "OrderBy: " << col_name << " " << order;
 }
+
+void OrderBy::write_intermideate(const std::vector<TableResults> &batches)
+{
+    std::filesystem::create_directories("temp");
+
+    for (size_t i = 0; i < batches.size(); i++)
+    {
+        const TableResults &batch = batches[i];
+        std::string filename = "temp/order_by_batch_" + std::to_string(i) + ".bin";
+
+        std::ofstream outfile(filename, std::ios::binary);
+        if (!outfile)
+        {
+            throw std::runtime_error("Failed to open temporary file: " + filename);
+        }
+
+        // Write batch metadata in a compact format
+        uint32_t row_count = static_cast<uint32_t>(batch.row_count);
+        uint16_t column_count = static_cast<uint16_t>(batch.column_count);
+        outfile.write(reinterpret_cast<const char *>(&row_count), sizeof(uint32_t));
+        outfile.write(reinterpret_cast<const char *>(&column_count), sizeof(uint16_t));
+
+        // Write column information in a compact format
+        for (const auto &col : batch.columns)
+        {
+            uint8_t name_len = static_cast<uint8_t>(col.name.length());
+            outfile.write(reinterpret_cast<const char *>(&name_len), sizeof(uint8_t));
+            outfile.write(col.name.c_str(), name_len);
+            uint8_t type = static_cast<uint8_t>(col.type);
+            outfile.write(reinterpret_cast<const char *>(&type), sizeof(uint8_t));
+        }
+
+        // Write data for each column in a compact format
+        for (size_t col_idx = 0; col_idx < batch.column_count; col_idx++)
+        {
+            switch (batch.columns[col_idx].type)
+            {
+            case DataType::FLOAT:
+            {
+                float *data = static_cast<float *>(batch.data[col_idx]);
+                outfile.write(reinterpret_cast<const char *>(data), batch.row_count * sizeof(float));
+                break;
+            }
+            case DataType::DATETIME:
+            {
+                uint64_t *data = static_cast<uint64_t *>(batch.data[col_idx]);
+                outfile.write(reinterpret_cast<const char *>(data), batch.row_count * sizeof(uint64_t));
+                break;
+            }
+            case DataType::STRING:
+            {
+                const char **data = static_cast<const char **>(batch.data[col_idx]);
+                for (size_t row = 0; row < batch.row_count; row++)
+                {
+                    uint16_t str_len = static_cast<uint16_t>(strlen(data[row]));
+                    outfile.write(reinterpret_cast<const char *>(&str_len), sizeof(uint16_t));
+                    outfile.write(data[row], str_len);
+                }
+                break;
+            }
+            default:
+                throw std::runtime_error("Unsupported data type in write_intermediate");
+            }
+        }
+
+        outfile.close();
+    }
+}
+
+TableResults OrderBy::read_intermediate(const std::string &filename)
+{
+    std::ifstream infile(filename, std::ios::binary);
+    if (!infile)
+    {
+        throw std::runtime_error("Failed to open temporary file: " + filename);
+    }
+
+    TableResults result;
+
+    // Read batch metadata
+    uint32_t row_count;
+    uint16_t column_count;
+    infile.read(reinterpret_cast<char *>(&row_count), sizeof(uint32_t));
+    infile.read(reinterpret_cast<char *>(&column_count), sizeof(uint16_t));
+
+    result.row_count = row_count;
+    result.column_count = column_count;
+    result.columns.resize(column_count);
+    result.data.resize(column_count);
+
+    // Read column information
+    for (size_t i = 0; i < column_count; i++)
+    {
+        uint8_t name_len;
+        infile.read(reinterpret_cast<char *>(&name_len), sizeof(uint8_t));
+        std::string col_name(name_len, '\0');
+        infile.read(&col_name[0], name_len);
+
+        uint8_t type;
+        infile.read(reinterpret_cast<char *>(&type), sizeof(uint8_t));
+
+        result.columns[i].name = col_name;
+        result.columns[i].type = static_cast<DataType>(type);
+    }
+
+    // Read data for each column
+    for (size_t col_idx = 0; col_idx < column_count; col_idx++)
+    {
+        switch (result.columns[col_idx].type)
+        {
+        case DataType::FLOAT:
+        {
+            float *data = static_cast<float *>(malloc(row_count * sizeof(float)));
+            infile.read(reinterpret_cast<char *>(data), row_count * sizeof(float));
+            result.data[col_idx] = data;
+            break;
+        }
+        case DataType::DATETIME:
+        {
+            uint64_t *data = static_cast<uint64_t *>(malloc(row_count * sizeof(uint64_t)));
+            infile.read(reinterpret_cast<char *>(data), row_count * sizeof(uint64_t));
+            result.data[col_idx] = data;
+            break;
+        }
+        case DataType::STRING:
+        {
+            const char **data = static_cast<const char **>(malloc(row_count * sizeof(char *)));
+            for (size_t row = 0; row < row_count; row++)
+            {
+                uint16_t str_len;
+                infile.read(reinterpret_cast<char *>(&str_len), sizeof(uint16_t));
+                char *str = static_cast<char *>(malloc(str_len + 1));
+                infile.read(str, str_len);
+                str[str_len] = '\0';
+                data[row] = str;
+            }
+            result.data[col_idx] = data;
+            break;
+        }
+        default:
+            throw std::runtime_error("Unsupported data type in read_intermediate");
+        }
+    }
+
+    infile.close();
+    return result;
+}
+
+TableResults OrderBy::merge_sorted_files()
+{
+    std::vector<TableResults> batches;
+    size_t batch_count = 0;
+
+    // Read all batch files
+    while (true)
+    {
+        std::string filename = "temp/order_by_batch_" + std::to_string(batch_count) + ".bin";
+        if (!std::filesystem::exists(filename))
+        {
+            break;
+        }
+        batches.push_back(read_intermediate(filename));
+        batch_count++;
+    }
+
+    if (batches.empty())
+    {
+        TableResults empty;
+        empty.row_count = 0;
+        empty.column_count = 0;
+        return empty;
+    }
+
+    // Merge all batches using the existing GPU merge function
+    TableResults result = mergeSortedBatchesOnGPU(batches);
+
+    // Clean up temporary files
+    for (size_t i = 0; i < batch_count; i++)
+    {
+        std::string filename = "temp/order_by_batch_" + std::to_string(i) + ".bin";
+        std::filesystem::remove(filename);
+    }
+
+    return result;
+}

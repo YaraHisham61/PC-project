@@ -49,7 +49,6 @@ __global__ void hashJoinKernel(
     }
 }
 
-
 template <>
 __global__ void hashJoinKernel<const char *>(
     const char *const *__restrict__ left_data,

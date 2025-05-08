@@ -719,7 +719,6 @@ TableResults HashJoin::executeJoinCPU(const TableResults &left_table, const Tabl
     {
         TableResults result;
         result.row_count = 0;
-        result.has_more = false;
         return result;
     }
 

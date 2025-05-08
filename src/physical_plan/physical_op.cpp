@@ -239,7 +239,8 @@ void PhysicalOpNode::executePlanInBatches(
         profiler.start("JOIN");
         auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU);
         profiler.stop("JOIN");
-
+        current_batch->is_join = is_join;
+        current_batch->end_right = end_right;
         if (!current_batch)
         {
             std::cerr << "Error: No result for batch " << batch_index << "\n";
@@ -265,8 +266,7 @@ void PhysicalOpNode::executePlanInBatches(
         }
         else
         {
-            current_batch->is_join = is_join;
-            current_batch->end_right = end_right;
+
             // current_batch->batch_index = batch_index;
             if (current_batch->row_count != 0)
             {
@@ -277,7 +277,7 @@ void PhysicalOpNode::executePlanInBatches(
 
         if (!has_more)
             break;
-        if (current_batch->is_join)
+        if (is_join)
         {
             batch_index_right++;
             current_batch->batch_index_right = batch_index_right;
@@ -296,6 +296,7 @@ void PhysicalOpNode::executePlanInBatches(
             batch_index++;
         }
         current_batch->batch_index = batch_index;
+        std::cout << "Batch " << batch_index << "finished" << ":\n";
     }
 
     if (is_aggregate)

@@ -77,7 +77,19 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
             std::cerr << "Error: Missing input tables for join\n";
             return nullptr;
         }
-        TableResults join_result = join_ptr->executeJoin(*left_table_ptr, *right_table_ptr);
+        TableResults join_result;
+        if (GPU)
+        {
+            profiler.start("GPU Join");
+            join_result = join_ptr->executeJoin(*left_table_ptr, *right_table_ptr);
+            profiler.stop("GPU Join");
+        }
+        else
+        {
+            profiler.start("CPU Join");
+            join_result = join_ptr->executeJoinCPU(*left_table_ptr, *right_table_ptr);
+            profiler.stop("CPU Join");
+        }
         if (*input_table_ptr)
         {
             **input_table_ptr = std::move(join_result);
@@ -227,14 +239,15 @@ void PhysicalOpNode::executePlanInBatches(
     // {
     //     order_by_op = std::make_unique<OrderBy>(op->ParamsToString());
     // }
+    Profiler profiler;
     bool is_join = false;
     bool end_right = false;
     while (true)
     {
         current_batch = nullptr;
-
+        profiler.start("JOIN");
         auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU);
-
+        profiler.stop("JOIN");
         if (!current_batch)
         {
             std::cerr << "Error: No result for batch " << batch_index << "\n";
@@ -258,6 +271,7 @@ void PhysicalOpNode::executePlanInBatches(
                 current_batch->end_right = end_right;
                 // current_batch->batch_index = batch_index;
                 current_batch->write_to_file();
+                std::cout << "Batch " << batch_index << "   " << current_batch->row_count << ":\n";
             }
             // current_batch->print();
         }

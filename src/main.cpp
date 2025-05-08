@@ -117,32 +117,32 @@ int main()
 
     std::cout << physical_plan.get()->Root().ToString() << std::endl;
 
-    // profiler.start("CPU Execution");
-    // std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
-    // std::string csv_file4 = std::string(DATA_DIR) + "table_4.csv";
-    // // // std::string create_table_query = "INSERT INTO Student SELECT * FROM read_csv('" + csv_file + "',header=false);";
-    // std::string create_table_query = "COPY table_1 FROM '" + csv_file + "';";
-    // std::string create_table_query4 = "COPY table_4 FROM '" + csv_file4 + "';";
-    // auto create_result = con.Query(create_table_query);
-    // auto create_result4 = con.Query(create_table_query4);
-    // auto result = con.Query(query);
-    // profiler.stop("CPU Execution");
-    // std::cout << "CPU Execution Result:\n";
-    // if (result->HasError())
-    // {
-    //     std::cerr << "Query execution failed: " << result->GetError() << std::endl;
-    //     return 1;
-    // }
-    // std::cout << "Result:\n";
-    // std::cout << result->RowCount() << "\n";
+    profiler.start("CPU Execution");
+    std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
+    std::string csv_file4 = std::string(DATA_DIR) + "table_4.csv";
+    // // std::string create_table_query = "INSERT INTO Student SELECT * FROM read_csv('" + csv_file + "',header=false);";
+    std::string create_table_query = "COPY table_1 FROM '" + csv_file + "';";
+    std::string create_table_query4 = "COPY table_4 FROM '" + csv_file4 + "';";
+    auto create_result = con.Query(create_table_query);
+    auto create_result4 = con.Query(create_table_query4);
+    auto result = con.Query(query);
+    profiler.stop("CPU Execution");
+    std::cout << "CPU Execution Result:\n";
+    if (result->HasError())
+    {
+        std::cerr << "Query execution failed: " << result->GetError() << std::endl;
+        return 1;
+    }
+    std::cout << "Result:\n";
+    std::cout << result->RowCount() << "\n";
 
     // profiler.start("CPU Execution MY");
-    // PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 10000000, false);
+    // PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 1000000, false);
     // // printPhysicalPlan(&(physical_plan.get()->Root()));
     // profiler.stop("CPU Execution MY");
 
     profiler.start("GPU Execution");
-    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 100000, true);
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 50000, true);
     // printPhysicalPlan(&(physical_plan.get()->Root()));
     profiler.stop("GPU Execution");
 

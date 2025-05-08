@@ -6,6 +6,9 @@
 #include "physical_plan/physical_op.hpp"
 #include "duckdb/execution/executor.hpp"
 #include <memory>
+#include <fstream>
+#include <iostream>
+#include <string>
 
 std::string readQueryFromFile(const std::string &filename)
 {
@@ -17,7 +20,6 @@ std::string readQueryFromFile(const std::string &filename)
 
     std::string query;
     std::string line;
-
     while (std::getline(inputFile, line))
     {
         if (!query.empty())
@@ -30,123 +32,97 @@ std::string readQueryFromFile(const std::string &filename)
     inputFile.close();
     return query;
 }
-void printPhysicalPlan(duckdb::PhysicalOperator *node, int depth = 0)
+
+void setupDatabase(duckdb::Connection &con)
 {
-    if (!node)
-        return;
-
-    std::string op_name = node->GetName();
-    auto params = node->ParamsToString();
-    op_name.erase(std::remove(op_name.begin(), op_name.end(), ' '), op_name.end());
-
-    for (auto &child : node->children)
-    {
-        printPhysicalPlan(&(child.get()), depth + 1);
-    }
-    // Print the current node with indentation
-    std::cout << op_name << std::endl;
-    for (auto param : params)
-    {
-
-        std::cout << param.first << ": " << param.second << std::endl;
-    }
-}
-int main()
-{
-    Profiler profiler;
-    profiler.start("Total");
-    // Create in-memory database
-    DB data_base;
-    duckdb::DuckDB db(nullptr);
-    duckdb::Connection con(db);
-    DuckDBInterface duckdb_interface(db, con);
-
-    // con.Query("PRAGMA enable_profiling");
-    // con.Query("PRAGMA profiling_mode=detailed");
-
-    con.Query("SET disabled_optimizers = 'filter_pushdown, statistics_propagation';"); // Disable returning empty results
+    con.Query("SET disabled_optimizers = 'filter_pushdown, statistics_propagation';");
     con.Query("SET threads TO 1;");
+}
 
-    profiler.start("Import CSV");
-    CSVImporter csv_importer(db, con);
-    bool x = csv_importer.import_folder(DATA_DIR, &data_base);
-
-    if (!x)
+bool importData(CSVImporter &csv_importer, DB &data_base, std::string data_dir = "data/")
+{
+    bool success = csv_importer.import_folder(data_dir, &data_base);
+    if (!success)
     {
         std::cerr << "Error importing CSV file." << std::endl;
-        return 1;
+        return false;
     }
-    else
-    {
-        std::cout << "CSV file imported successfully." << std::endl;
-    }
-    profiler.stop("Import CSV");
-    // data_base.print_databse();
-    con.BeginTransaction();
-    // Query to analyze
+    std::cout << "CSV file imported successfully." << std::endl;
+    return true;
+}
 
-    // std::string query = "SELECT * FROM table1 order by id ASC;";
-    // std::string query = "SELECT COUNT(name) FROM Student;";
-    // id(N)(P), completion_date(D), longitude(N), total(N)
-
-    // std::string query = "SELECT id FROM table_1 ORDER BY id; ";
-    // std::string query = "SELECT AVG(e.Salary) AS AverageSalary FROM Employees e,SalesOrders s WHERE e.Employees_id = s.Employees_id AND s.TotalAmount > 200; ";
-
-    // std::string query = "SELECT UPPER(name),id AS name_upper FROM Student;";
-    // std::string query = "SELECT count(*) ,count(name) FROM Student;";
-    // std::string query = "SELECT t1.id , t5.table_1_id , t4.table_1_id FROM  table_1 t1 , table_5 t5, table_4 t4 where t1.id = t5.table_1_id and t1.id = t4.table_1_id and t1.id >8000";
-    // std::string query = "SELECT * FROM  table_1 t1 , table_4 t4 WHERE t1.id= t4.table_1_id;";
-    // std::string query = "SELECT * FROM  table1 t4 , table4 t1 WHERE t4.id= t1.table_1_id and t1.last_modified = t4.completion_date;";
-
-    // std::string query = "SELECT id,year,name,name FROM Student;";
-    std::string query_file = std::string(DATA_DIR) + "query1.txt";
-    std::string query = readQueryFromFile(query_file);
-
-    profiler.start("Get Logical Plan");
-    auto logical_plan = duckdb_interface.getLogicalPlan(query);
-    profiler.stop("Get Logical Plan");
-    // std::cout << "Logical plan:\n"
-    //           << logical_plan->ToString() << std::endl;
-
-    profiler.start("Get Physical Plan");
-    duckdb::PhysicalPlanGenerator physical_plan_generator(*con.context);
-    auto physical_plan = physical_plan_generator.Plan(logical_plan->Copy(*con.context));
-    profiler.stop("Get Physical Plan");
-
-    std::cout << "Physical plan:\n";
-
-    std::cout << physical_plan.get()->Root().ToString() << std::endl;
-
+void executeQueryCPU(duckdb::PhysicalOperator *physical_plan, DB &data_base, Profiler &profiler, std::string query_file_name, std::string data_dir)
+{
     profiler.start("CPU Execution");
-    std::string csv_file = std::string(DATA_DIR) + "table_1.csv";
-    std::string csv_file4 = std::string(DATA_DIR) + "table_4.csv";
-    // // std::string create_table_query = "INSERT INTO Student SELECT * FROM read_csv('" + csv_file + "',header=false);";
-    std::string create_table_query = "COPY table_1 FROM '" + csv_file + "';";
-    std::string create_table_query4 = "COPY table_4 FROM '" + csv_file4 + "';";
-    auto create_result = con.Query(create_table_query);
-    auto create_result4 = con.Query(create_table_query4);
-    auto result = con.Query(query);
+    PhysicalOpNode::executePlanInBatches(physical_plan, &data_base, query_file_name, data_dir, 50000, false);
     profiler.stop("CPU Execution");
     std::cout << "CPU Execution Result:\n";
-    if (result->HasError())
+}
+
+void executeQueryGPU(duckdb::PhysicalOperator *physical_plan, DB &data_base, Profiler &profiler, std::string query_file_name, std::string data_dir)
+{
+    profiler.start("GPU Execution");
+    PhysicalOpNode::executePlanInBatches(physical_plan, &data_base, query_file_name, data_dir, 50000, true);
+    profiler.stop("GPU Execution");
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 3)
     {
-        std::cerr << "Query execution failed: " << result->GetError() << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <data_folder_path> <query_file>" << std::endl;
         return 1;
     }
-    std::cout << "Result:\n";
-    std::cout << result->RowCount() << "\n";
 
-    // profiler.start("CPU Execution MY");
-    // PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 1000000, false);
-    // // printPhysicalPlan(&(physical_plan.get()->Root()));
-    // profiler.stop("CPU Execution MY");
+    std::string data_folder_path = argv[1];
+    std::string query_file = argv[2];
+    try
+    {
+        Profiler profiler;
+        profiler.start("Total");
 
-    profiler.start("GPU Execution");
-    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 50000, true);
-    // printPhysicalPlan(&(physical_plan.get()->Root()));
-    profiler.stop("GPU Execution");
+        DB data_base;
+        duckdb::DuckDB db(nullptr);
+        duckdb::Connection con(db);
+        DuckDBInterface duckdb_interface(db, con);
 
-    profiler.stop("Total");
+        setupDatabase(con);
 
-    return 0;
+        profiler.start("Import CSV");
+        CSVImporter csv_importer(db, con);
+        if (!importData(csv_importer, data_base, data_folder_path))
+        {
+            return 1;
+        }
+        con.BeginTransaction();
+        profiler.stop("Import CSV");
+
+        std::string query = readQueryFromFile(query_file);
+
+        profiler.start("Get Logical Plan");
+        auto logical_plan = duckdb_interface.getLogicalPlan(query);
+        profiler.stop("Get Logical Plan");
+
+        profiler.start("Get Physical Plan");
+        duckdb::PhysicalPlanGenerator physical_plan_generator(*con.context);
+        auto physical_plan = physical_plan_generator.Plan(logical_plan->Copy(*con.context));
+        profiler.stop("Get Physical Plan");
+
+        executeQueryCPU(&(physical_plan.get()->Root()), data_base, profiler, query_file, data_folder_path);
+
+        executeQueryGPU(&(physical_plan.get()->Root()), data_base, profiler, query_file, data_folder_path);
+
+        profiler.stop("Total");
+        return 0;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+    catch (...)
+    {
+        std::cerr << "Unknown error occurred" << std::endl;
+        return 1;
+    }
 }

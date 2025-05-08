@@ -42,12 +42,12 @@ void SeqScan::print() const
     }
 }
 
-TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t batch_size)
+TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t batch_size, std::string data_dir)
 {
     TableResults result;
     result.batch_index = batch_index;
 
-    std::string csv_file = DATA_DIR + this->table_name + ".csv";
+    std::string csv_file = data_dir + "/" + this->table_name + ".csv";
 
     // Open file stream
     std::ifstream file(csv_file);

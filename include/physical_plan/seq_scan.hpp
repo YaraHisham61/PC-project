@@ -12,7 +12,7 @@ public:
 
     SeqScan(const duckdb::InsertionOrderPreservingMap<std::string> &params);
     ~SeqScan() = default;
-    TableResults read_scan_table(DB *data_base, size_t batch_index, size_t batch_size);
+    TableResults read_scan_table(DB *data_base, size_t batch_index, size_t batch_size, std::string data_dir);
     std::string get_original_column_name(const ColumnInfo *c, const std::string &col_name);
     void print() const override;
 };

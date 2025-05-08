@@ -8,11 +8,6 @@
 #include "data_types.hpp"
 #include <iomanip> // For std::fixed, std::setprecision
 
-// Struct for column metadata
-
-#define DATA_DIR "/mnt/e/Collage/PC - Parallel Computing/Project/dbms/data/"
-// #define DATA_DIR "/mnt/c/Users/LENOVE/Desktop/second term 4/p/PC-project/data/"
-
 struct ColumnInfo
 {
     std::string name;
@@ -127,15 +122,34 @@ public:
         in_file.close();
         return size == 0;
     }
-    void write_to_file() const
+    void write_to_file(std::string query_file_name) const
     {
-        std::string filename = std::string(DATA_DIR) + "output.csv";
+        std::string query_name = query_file_name;
+        size_t start_pos = query_name.find("query");
+        size_t end_pos = query_name.find(".txt");
+        if (start_pos != std::string::npos && end_pos != std::string::npos && start_pos < end_pos)
+        {
+            query_name = query_name.substr(start_pos, end_pos - start_pos);
+        }
+        std::string filename = "Team9_" + query_name + ".csv";
         std::ofstream file(filename, std::ios::app); // Open file in append mode
         if (!file.is_open())
         {
-            std::cerr << "Error opening file for writing: " << filename << "\n";
+            // If the file doesn't exist, create it
+            std::ofstream create_file(filename);
+            if (!create_file.is_open())
+            {
+            std::cerr << "Error creating file: " << filename << "\n";
             return;
+            }
+            create_file.close();
+            file.open(filename, std::ios::app); // Reopen in append mode
         }
+        // if (!file.is_open())
+        // {
+        //     std::cerr << "Error opening file for writing: " << filename << "\n";
+        //     return;
+        // }
 
         // Write column headers only if it's the first batch
         if (is_file_empty(filename))
@@ -191,58 +205,6 @@ public:
 
         file.close();
         // std::cout << "Data appended to file: " << filename << "\n";
-    }
-
-    void write_aggregate_to_file()
-    {
-        std::string filename = std::string(DATA_DIR) + "output.txt";
-        std::ofstream file(filename);
-        if (!file.is_open())
-        {
-            std::cerr << "Error opening file for writing: " << filename << "\n";
-            return;
-        }
-        // Write column headers
-        for (size_t col = 0; col < column_count; ++col)
-        {
-            file << columns[col].name;
-            if (col < column_count - 1)
-                file << "\t";
-        }
-        file << "\n";
-        for (size_t row = 0; row < row_count; ++row)
-        {
-            for (size_t col = 0; col < column_count; ++col)
-            {
-                if (columns[col].type == DataType::FLOAT)
-                {
-                    // Convert float to string with fixed precision
-                    file << std::fixed << std::setprecision(2) << static_cast<float *>(data[col])[row];
-                }
-                else if (columns[col].type == DataType::DATETIME)
-                {
-                    uint64_t timestamp = static_cast<uint64_t *>(data[col])[row];
-                    std::time_t time = static_cast<std::time_t>(timestamp);
-                    file << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
-                }
-                else if (columns[col].type == DataType::STRING)
-                {
-                    std::string str = static_cast<char **>(data[col])[row];
-                    if (str.find(',') != std::string::npos)
-                    {
-                        file << "\"" << str << "\"";
-                    }
-                    else
-                    {
-                        file << str;
-                    }
-                }
-                if (col < column_count - 1)
-                    file << "\t";
-            }
-            file << "\n";
-        }
-        file.close();
     }
 };
 

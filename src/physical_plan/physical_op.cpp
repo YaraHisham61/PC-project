@@ -13,7 +13,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
     DB *data_base,
     TableResults **input_table_ptr,
-    size_t batch_index, size_t batch_size, size_t batch_index_right, bool *is_join, bool *end_right, bool GPU)
+    size_t batch_index, size_t batch_size, size_t batch_index_right, bool *is_join, bool *end_right, bool GPU, std::string data_dir)
 {
     if (!op)
     {
@@ -60,7 +60,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         auto *join_ptr = static_cast<HashJoin *>(node.get());
         *is_join = true;
         TableResults *left_table_ptr = nullptr;
-        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU);
+        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU, data_dir);
         if (left_table_ptr->row_count == 0)
         {
             return node;
@@ -70,7 +70,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
             node->children.push_back(std::move(left_child));
 
         TableResults *right_table_ptr = nullptr;
-        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index_right, batch_size, batch_index_right, is_join, end_right, GPU);
+        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index_right, batch_size, batch_index_right, is_join, end_right, GPU, data_dir);
 
         if (right_child)
             node->children.push_back(std::move(right_child));
@@ -113,7 +113,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     }
     for (auto &child : op->children)
     {
-        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU);
+        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU, data_dir);
         if (child_node && !child_node->params.empty())
         {
             node->children.push_back(std::move(child_node));
@@ -124,7 +124,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     if (op_name == "SEQ_SCAN")
     {
         auto *seq_ptr = static_cast<SeqScan *>(node.get());
-        TableResults scan_result = seq_ptr->read_scan_table(data_base, batch_index, batch_size);
+        TableResults scan_result = seq_ptr->read_scan_table(data_base, batch_index, batch_size, data_dir);
         // scan_result.print();
         if (*input_table_ptr)
         {
@@ -210,7 +210,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 }
 
 void PhysicalOpNode::executePlanInBatches(
-    duckdb::PhysicalOperator *op, DB *data_base, size_t batch_size = 1000, bool GPU = true)
+    duckdb::PhysicalOperator *op, DB *data_base, std::string query_file_name, std::string data_dir, size_t batch_size, bool GPU)
 {
     TableResults *current_batch = nullptr;
     size_t batch_index = 0;
@@ -220,10 +220,9 @@ void PhysicalOpNode::executePlanInBatches(
 
     bool is_aggregate = (op->GetName() == "UNGROUPED_AGGREGATE");
     bool is_order_by = (op->GetName() == "ORDER_BY");
-    std::vector<TableResults> order_by_batches;   // For OrderBy merging
-    std::vector<std::future<void>> write_futures; // For async file writes
+    std::vector<TableResults> order_by_batches;
+    std::vector<std::future<void>> write_futures;
 
-    // Memory threshold for OrderBy (in bytes)
     const size_t MEMORY_THRESHOLD = 100 * 1024 * 1024; // 100MB
     size_t current_memory_usage = 0;
     bool using_intermediate_files = false;
@@ -243,8 +242,9 @@ void PhysicalOpNode::executePlanInBatches(
     bool end_right = false;
     while (true)
     {
+
         current_batch = nullptr;
-        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU);
+        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU, data_dir);
         current_batch->is_join = is_join;
         current_batch->end_right = end_right;
         if (!current_batch)
@@ -294,10 +294,9 @@ void PhysicalOpNode::executePlanInBatches(
         {
             if (current_batch->row_count != 0)
             {
-                TableResults batch_copy = *current_batch; // Copy to avoid data race
-                write_futures.push_back(std::async(std::launch::async, [batch_copy]()
-                                                   { batch_copy.write_to_file(); }));
-                std::cout << "Batch " << batch_index << " DONE" << ":\n";
+                TableResults batch_copy = *current_batch;
+                write_futures.push_back(std::async(std::launch::async, [query_file_name, batch_copy]()
+                                                   { batch_copy.write_to_file(query_file_name); }));
             }
         }
 
@@ -322,14 +321,13 @@ void PhysicalOpNode::executePlanInBatches(
             batch_index++;
         }
         current_batch->batch_index = batch_index;
-        std::cout << "Batch " << batch_index << "finished" << ":\n";
     }
 
     if (is_aggregate)
     {
         aggregate_op->intermidiate_results->total_rows = total_rows;
         aggregate_op->finalizeAggregates(*aggregate_op->intermidiate_results);
-        aggregate_op->intermidiate_results->write_to_file();
+        aggregate_op->intermidiate_results->write_to_file(query_file_name);
     }
     else if (is_order_by)
     {
@@ -343,13 +341,11 @@ void PhysicalOpNode::executePlanInBatches(
             final_result = order_by_op->mergeSortedBatchesOnGPU(order_by_batches);
         }
 
-        // Write final result
-        TableResults batch_copy = final_result; // Copy for async write
-        write_futures.push_back(std::async(std::launch::async, [batch_copy]()
-                                           { batch_copy.write_to_file(); }));
+        TableResults batch_copy = final_result;
+        write_futures.push_back(std::async(std::launch::async, [query_file_name, batch_copy]()
+                                           { batch_copy.write_to_file(query_file_name); }));
     }
 
-    // Wait for all async writes to complete
     for (auto &future : write_futures)
     {
         future.wait();

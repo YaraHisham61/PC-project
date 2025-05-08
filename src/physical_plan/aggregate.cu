@@ -81,6 +81,7 @@ TableResults Aggregate::computeAggregates(const TableResults &input) const
 
     TableResults result;
     result.row_count = 1;
+    result.has_more = input.has_more;
     result.total_rows += input.row_count;
     result.column_count = aggregates.size();
     result.data.resize(result.column_count);
@@ -917,8 +918,6 @@ void Aggregate::updateAggregates(const TableResults &input)
 
 void Aggregate::finalizeAggregates(TableResults &result) const
 {
-    std::cout << "Finalizing aggregates with total_rows: " << result.total_rows << "\n";
-
     for (size_t i = 0; i < aggregates.size(); ++i)
     {
         switch (aggregates[i].type)

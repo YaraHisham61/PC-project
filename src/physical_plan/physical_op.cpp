@@ -82,15 +82,11 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         TableResults join_result;
         if (GPU)
         {
-            profiler.start("GPU Join");
             join_result = join_ptr->executeJoin(*left_table_ptr, *right_table_ptr);
-            profiler.stop("GPU Join");
         }
         else
         {
-            profiler.start("CPU Join");
             join_result = join_ptr->executeJoinCPU(*left_table_ptr, *right_table_ptr);
-            profiler.stop("CPU Join");
         }
         if (*input_table_ptr)
         {
@@ -120,12 +116,10 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         }
     }
 
-    // Now execute the current operation
     if (op_name == "SEQ_SCAN")
     {
         auto *seq_ptr = static_cast<SeqScan *>(node.get());
         TableResults scan_result = seq_ptr->read_scan_table(data_base, batch_index, batch_size, data_dir);
-        // scan_result.print();
         if (*input_table_ptr)
         {
             **input_table_ptr = std::move(scan_result);
@@ -134,7 +128,6 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         {
             *input_table_ptr = new TableResults(std::move(scan_result));
         }
-        // input_table_ptr->print();
     }
     else if (op_name == "FILTER")
     {
@@ -147,17 +140,13 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         auto *filter_ptr = static_cast<Filter *>(node.get());
         if (GPU)
         {
-            profiler.start("GPU Filter");
             TableResults filtered_result = filter_ptr->applyFilter(**input_table_ptr);
             **input_table_ptr = std::move(filtered_result);
-            profiler.stop("GPU Filter");
         }
         else
         {
-            profiler.start("CPU Filter");
             TableResults filtered_result = filter_ptr->applyFilterCPU(**input_table_ptr);
             **input_table_ptr = std::move(filtered_result);
-            profiler.stop("CPU Filter");
         }
     }
     else if (op_name == "PROJECTION")
@@ -175,7 +164,6 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
                 return node;
         }
         TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
-        // projected_result.print();
         **input_table_ptr = std::move(projected_result);
     }
     else if (op_name == "UNGROUPED_AGGREGATE")
@@ -202,7 +190,6 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 
         auto *order_ptr = static_cast<OrderBy *>(node.get());
         TableResults ordered_result = order_ptr->executeOrderBy(**input_table_ptr);
-        // ordered_result.print();
         **input_table_ptr = std::move(ordered_result);
     }
 
@@ -245,13 +232,13 @@ void PhysicalOpNode::executePlanInBatches(
 
         current_batch = nullptr;
         auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU, data_dir);
-        current_batch->is_join = is_join;
-        current_batch->end_right = end_right;
         if (!current_batch)
         {
             std::cerr << "Error: No result for batch " << batch_index << "\n";
             break;
         }
+        current_batch->is_join = is_join;
+        current_batch->end_right = end_right;
         if (is_join)
         {
             has_more = current_batch->has_more || !end_right;

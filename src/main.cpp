@@ -44,19 +44,34 @@ bool importData(CSVImporter &csv_importer, DB &data_base, std::string data_dir =
     bool success = csv_importer.import_folder(data_dir, &data_base);
     if (!success)
     {
-        std::cerr << "Error importing CSV file." << std::endl;
+        std::cerr << "Error importing CSV folder." << std::endl;
         return false;
     }
-    std::cout << "CSV file imported successfully." << std::endl;
+    std::cout << "CSV folder imported successfully." << std::endl;
     return true;
 }
 
-void executeQueryCPU(duckdb::PhysicalOperator *physical_plan, DB &data_base, Profiler &profiler, std::string query_file_name, std::string data_dir)
+void executeQueryCPU(duckdb::PhysicalOperator *physical_plan, duckdb::Connection &con, DB &data_base, Profiler &profiler, std::string query, std::string data_dir)
 {
     profiler.start("CPU Execution");
-    PhysicalOpNode::executePlanInBatches(physical_plan, &data_base, query_file_name, data_dir, 50000, false);
+    for (const auto &table : data_base.tables)
+    {
+        std::string table_name = table.name;
+        std::string csv_file = data_dir + "/" + table_name + ".csv";
+        std::string create_table_query = "COPY " + std::string(table_name) + " FROM '" + csv_file + "';";
+        auto result = con.Query(create_table_query);
+        if (result->HasError())
+        {
+            std::cerr << "Error executing query: " << result->GetError() << std::endl;
+        }
+    }
+    auto result = con.Query(query);
+
+    if (result->HasError())
+    {
+        std::cerr << "Error executing query: " << result->GetError() << std::endl;
+    }
     profiler.stop("CPU Execution");
-    std::cout << "CPU Execution Result:\n";
 }
 
 void executeQueryGPU(duckdb::PhysicalOperator *physical_plan, DB &data_base, Profiler &profiler, std::string query_file_name, std::string data_dir)
@@ -108,7 +123,7 @@ int main(int argc, char *argv[])
         auto physical_plan = physical_plan_generator.Plan(logical_plan->Copy(*con.context));
         profiler.stop("Get Physical Plan");
 
-        executeQueryCPU(&(physical_plan.get()->Root()), data_base, profiler, query_file, data_folder_path);
+        executeQueryCPU(&(physical_plan.get()->Root()), con, data_base, profiler, query, data_folder_path);
 
         executeQueryGPU(&(physical_plan.get()->Root()), data_base, profiler, query_file, data_folder_path);
 

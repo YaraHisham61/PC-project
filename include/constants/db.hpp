@@ -145,12 +145,6 @@ public:
             create_file.close();
             file.open(filename, std::ios::app); // Reopen in append mode
         }
-        // if (!file.is_open())
-        // {
-        //     std::cerr << "Error opening file for writing: " << filename << "\n";
-        //     return;
-        // }
-
         // Write column headers only if it's the first batch
         if (is_file_empty(filename))
         {

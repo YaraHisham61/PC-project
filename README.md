@@ -9,22 +9,6 @@ This project implements a GPU-accelerated database management system that proces
 - C++17 compatible compiler
 - WSL2 (if running on Windows)
 
-## Building DuckDB
-
-1. Clone DuckDB repository:
-```bash
-git clone https://github.com/duckdb/duckdb.git
-cd duckdb
-```
-
-2. Build DuckDB:
-```bash
-mkdir build
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j
-```
-
 ## Project Structure
 
 ```
@@ -37,7 +21,26 @@ dbms/
 │   ├── kernels/       # CUDA kernels
 │   └── physical_plan/ # Physical plan execution
 ├── src/               # Source files
+├── vendor/           # Third-party dependencies
+│   └── duckdb/       # DuckDB source code
 └── CMakeLists.txt     # Build configuration
+```
+
+## Setting Up DuckDB
+
+1. Clone DuckDB into the vendor directory:
+```bash
+cd vendor
+git clone https://github.com/duckdb/duckdb.git
+cd duckdb
+```
+
+2. Build DuckDB:
+```bash
+mkdir build
+cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
+make -j
 ```
 
 ## Building the Project
@@ -78,7 +81,7 @@ The program will:
 5. Generate output files in the current directory:
    - `Team9_<query_filename>.csv`: GPU execution results
 
-For example, if you run with `query1.txt`, the following files will be created:
+For example, if you run with `query1.txt`, the following file will be created:
 - `Team9_query1.csv`
 
 ## Data Format

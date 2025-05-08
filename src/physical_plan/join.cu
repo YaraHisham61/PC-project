@@ -11,8 +11,6 @@ HashJoin::HashJoin(const duckdb::InsertionOrderPreservingMap<std::string> &param
             col_table_left = it->second.substr(0, pos - 1);
             col_table_right = it->second.substr(pos + 2);
         }
-        // std::cout << "col_table_left: " << col_table_left << std::endl;
-        // std::cout << "col_table_right: " << col_table_right << std::endl;
     }
 }
 

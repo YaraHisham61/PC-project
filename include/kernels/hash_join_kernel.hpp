@@ -3,7 +3,10 @@
 #include <cuda_runtime.h>
 #include <vector>
 #include <variant>
+#include <stdint.h>
+#include <stdio.h>
 #include "constants/db.hpp"
+
 __device__ int device_strcmp22(const char *s1, const char *s2);
 
 template <typename T>

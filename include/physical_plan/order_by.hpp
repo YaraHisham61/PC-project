@@ -2,10 +2,10 @@
 
 #include "physical_plan/physical_op.hpp"
 
-#include "kernels/order_by.hpp"
+#include "kernels/order_by_kernel.hpp"
+#include "kernels/hash_join_kernel.hpp"
 #include <cuda_runtime.h>
 #include <sstream>
-#include "kernels/hash_join.hpp"
 
 class OrderBy : public PhysicalOpNode
 {

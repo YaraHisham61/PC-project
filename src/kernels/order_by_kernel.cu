@@ -1,4 +1,4 @@
-#include "kernels/order_by.hpp"
+#include "kernels/order_by_kernel.hpp"
 
 template <typename T>
 __device__ bool operators(const T &a, const T &b, bool ascending)

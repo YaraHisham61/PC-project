@@ -1,6 +1,4 @@
-#include <cuda_runtime.h>
-#include <stdint.h>
-#include <stdio.h>
+#include "kernels/hash_join_kernel.hpp"
 
 __device__ int device_strcmp22(const char *s1, const char *s2)
 {

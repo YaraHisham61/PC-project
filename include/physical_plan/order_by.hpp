@@ -18,5 +18,7 @@ public:
     ~OrderBy() override = default;
     std::vector<size_t> getSortedIndex(const TableResults &input_table);
     TableResults executeOrderBy(const TableResults &input_table);
+    TableResults mergeSortedBatchesOnGPU(const std::vector<TableResults> &batches);
+
     void print() const override;
 };

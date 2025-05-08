@@ -93,29 +93,19 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         if (*input_table_ptr)
         {
             **input_table_ptr = std::move(join_result);
-
-            (*input_table_ptr)->is_join = true;
-            if (right_table_ptr->has_more == false)
-            {
-                *end_right = true;
-            }
-            else
-            {
-                *end_right = false;
-            }
         }
         else
         {
             *input_table_ptr = new TableResults(std::move(join_result));
-            (*input_table_ptr)->is_join = true;
-            if (right_table_ptr->has_more == false)
-            {
-                *end_right = true;
-            }
-            else
-            {
-                *end_right = false;
-            }
+        }
+        (*input_table_ptr)->is_join = true;
+        if (right_table_ptr->has_more == false)
+        {
+            *end_right = true;
+        }
+        else
+        {
+            *end_right = false;
         }
         return node;
     }
@@ -224,21 +214,22 @@ void PhysicalOpNode::executePlanInBatches(
     size_t batch_index = 0;
     size_t batch_index_right = 0;
     size_t total_rows = 0;
+    bool has_more = true;
 
     bool is_aggregate = (op->GetName() == "UNGROUPED_AGGREGATE");
-    // bool is_order_by = (op->GetName() == "ORDER_BY");
-    // std::vector<TableResults> order_by_batches; // For OrderBy merging
+    bool is_order_by = (op->GetName() == "ORDER_BY");
+    std::vector<TableResults> order_by_batches; // For OrderBy merging
 
     std::unique_ptr<Aggregate> aggregate_op;
-    // std::unique_ptr<OrderBy> order_by_op;
+    std::unique_ptr<OrderBy> order_by_op;
     if (is_aggregate)
     {
         aggregate_op = std::make_unique<Aggregate>(op->ParamsToString());
     }
-    // else if (is_order_by)
-    // {
-    //     order_by_op = std::make_unique<OrderBy>(op->ParamsToString());
-    // }
+    else if (is_order_by)
+    {
+        order_by_op = std::make_unique<OrderBy>(op->ParamsToString());
+    }
     Profiler profiler;
     bool is_join = false;
     bool end_right = false;
@@ -248,10 +239,19 @@ void PhysicalOpNode::executePlanInBatches(
         profiler.start("JOIN");
         auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU);
         profiler.stop("JOIN");
+
         if (!current_batch)
         {
             std::cerr << "Error: No result for batch " << batch_index << "\n";
             break;
+        }
+        if (is_join)
+        {
+            has_more = current_batch->has_more || !end_right;
+        }
+        else
+        {
+            has_more = current_batch->has_more;
         }
 
         if (is_aggregate && current_batch->row_count != 0)
@@ -259,30 +259,29 @@ void PhysicalOpNode::executePlanInBatches(
             aggregate_op->updateAggregates(*current_batch);
             total_rows += current_batch->total_rows;
         }
-        // else if (is_order_by)
-        // {
-        //     order_by_batches.push_back(*current_batch);
-        // }
+        else if (is_order_by)
+        {
+            order_by_batches.push_back(*current_batch);
+        }
         else
         {
+            current_batch->is_join = is_join;
+            current_batch->end_right = end_right;
+            // current_batch->batch_index = batch_index;
             if (current_batch->row_count != 0)
             {
-                current_batch->is_join = is_join;
-                current_batch->end_right = end_right;
-                // current_batch->batch_index = batch_index;
                 current_batch->write_to_file();
                 std::cout << "Batch " << batch_index << "   " << current_batch->row_count << ":\n";
             }
-            // current_batch->print();
         }
 
-        if (!current_batch->has_more)
+        if (!has_more)
             break;
         if (current_batch->is_join)
         {
             batch_index_right++;
             current_batch->batch_index_right = batch_index_right;
-            if (current_batch->end_right == true)
+            if (end_right)
             {
                 current_batch->end_right = false;
                 end_right = false;
@@ -306,12 +305,12 @@ void PhysicalOpNode::executePlanInBatches(
         aggregate_op->intermidiate_results->write_to_file();
         // aggregate_op->intermidiate_results->print();
     }
-    // else if (is_order_by)
-    // {
-    //     TableResults final_result = order_by_op->mergeBatches(order_by_batches);
-    //     final_result.write_to_file(output_filename, false);
-    //     final_result.print();
-    // }
+    else if (is_order_by)
+    {
+        TableResults final_result = order_by_op->mergeSortedBatchesOnGPU(order_by_batches);
+        final_result.write_to_file();
+        // final_result.print();
+    }
 
     delete current_batch;
 }

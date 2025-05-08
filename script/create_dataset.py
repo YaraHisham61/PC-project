@@ -25,7 +25,7 @@ max_columns = 5
 min_pk_columns = 1
 max_pk_columns = 1
 folder_path = 'data'
-num_tables=  4
+num_tables=  1
 
 max_fk_columns = 2
 seed = 42

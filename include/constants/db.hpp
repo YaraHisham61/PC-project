@@ -10,8 +10,8 @@
 
 // Struct for column metadata
 
-// #define DATA_DIR "/mnt/e/Collage/PC - Parallel Computing/Project/dbms/data/"
-#define DATA_DIR "/mnt/c/Users/LENOVE/Desktop/second term 4/p/PC-project/data/"
+#define DATA_DIR "/mnt/e/Collage/PC - Parallel Computing/Project/dbms/data/"
+// #define DATA_DIR "/mnt/c/Users/LENOVE/Desktop/second term 4/p/PC-project/data/"
 
 struct ColumnInfo
 {
@@ -77,7 +77,7 @@ public:
         }
         throw std::runtime_error("Column not found: " + column_name);
     }
-    void print()
+    void print() const
     {
         for (const auto &col : columns)
         {
@@ -168,7 +168,12 @@ public:
                 }
                 else if (columns[col].type == DataType::STRING)
                 {
-                    std::string str = static_cast<char **>(data[col])[row];
+                    std::string str = "";
+                    if (static_cast<char **>(data[col])[row])
+                    {
+                        str = static_cast<char **>(data[col])[row];
+                    }
+
                     if (str.find(',') != std::string::npos)
                     {
                         file << "\"" << str << "\"";
@@ -187,7 +192,7 @@ public:
         file.close();
         // std::cout << "Data appended to file: " << filename << "\n";
     }
-    
+
     void write_aggregate_to_file()
     {
         std::string filename = std::string(DATA_DIR) + "output.txt";

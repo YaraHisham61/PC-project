@@ -11,7 +11,7 @@ OrderBy::OrderBy(const duckdb::InsertionOrderPreservingMap<std::string> &params)
         {
             text = text.substr(12);
         }
-        
+
         size_t pos = text.find('.');
         size_t pos2 = text.find(' ', pos);
         if (pos != std::string::npos && pos2 != std::string::npos)
@@ -28,10 +28,245 @@ OrderBy::OrderBy(const duckdb::InsertionOrderPreservingMap<std::string> &params)
                 is_Ascending = true;
             }
         }
-        std::cout << "table_name: " << table_name << std::endl;
-        std::cout << "col_name: " << col_name << std::endl;
-        std::cout << "order: " << is_Ascending << std::endl;
     }
+}
+// Merge multiple sorted TableResults on GPU using multiple CUDA streams
+TableResults OrderBy::mergeSortedBatchesOnGPU(const std::vector<TableResults> &batches)
+{
+    // Compute total rows and validate input
+    size_t total_rows = 0;
+    for (const auto &batch : batches)
+    {
+        total_rows += batch.row_count;
+    }
+    if (batches.empty() || total_rows == 0)
+    {
+        TableResults empty;
+        empty.row_count = 0;
+        empty.column_count = batches.empty() ? 0 : batches[0].column_count;
+        empty.columns = batches.empty() ? std::vector<ColumnInfo>() : batches[0].columns;
+        return empty;
+    }
+
+    // Create CUDA streams (one per batch + one for final merge)
+    std::vector<cudaStream_t> streams(batches.size());
+    cudaStream_t final_merge_stream;
+    cudaStreamCreate(&final_merge_stream);
+    for (size_t i = 0; i < batches.size(); ++i)
+    {
+        cudaStreamCreate(&streams[i]);
+    }
+
+    // Allocate GPU memory for unified indices
+    size_t *d_indices = nullptr;
+    size_t *d_indicesTmp = nullptr;
+    cudaMalloc(&d_indices, total_rows * sizeof(size_t));
+    cudaMalloc(&d_indicesTmp, total_rows * sizeof(size_t));
+
+    // Create batch index mapping: (batch_idx, row_idx)
+    struct BatchIndex
+    {
+        size_t batch_idx;
+        size_t row_idx;
+    };
+    std::vector<BatchIndex> h_batch_indices(total_rows);
+    size_t offset = 0;
+    for (size_t batch_idx = 0; batch_idx < batches.size(); ++batch_idx)
+    {
+        for (size_t row_idx = 0; row_idx < batches[batch_idx].row_count; ++row_idx)
+        {
+            h_batch_indices[offset] = {batch_idx, row_idx};
+            offset++;
+        }
+    }
+    BatchIndex *d_batch_indices = nullptr;
+    cudaMalloc(&d_batch_indices, total_rows * sizeof(BatchIndex));
+    cudaMemcpyAsync(d_batch_indices, h_batch_indices.data(), total_rows * sizeof(BatchIndex), cudaMemcpyHostToDevice, final_merge_stream);
+
+    // Find key column index
+    size_t col_idx = batches[0].getColumnIndex(col_name);
+    switch (batches[0].columns[col_idx].type)
+    {
+    case DataType::FLOAT:
+    {
+        float *d_data = nullptr;
+        cudaMalloc(&d_data, total_rows * sizeof(float));
+        // Copy keys for each batch in its own stream
+        offset = 0;
+        for (size_t batch_idx = 0; batch_idx < batches.size(); ++batch_idx)
+        {
+            float *batch_data = static_cast<float *>(batches[batch_idx].data[col_idx]);
+            cudaMemcpyAsync(d_data + offset, batch_data, batches[batch_idx].row_count * sizeof(float),
+                            cudaMemcpyHostToDevice, streams[batch_idx]);
+            offset += batches[batch_idx].row_count;
+        }
+        // Synchronize batch streams before merging
+        for (auto &stream : streams)
+        {
+            cudaStreamSynchronize(stream);
+        }
+        // Merge in final stream
+        int threadsPerBlock = 256;
+        for (int width = 1; width < total_rows; width *= 2)
+        {
+            int blocks = (total_rows + width * 2 - 1) / (width * 2);
+            int gridSize = (blocks + threadsPerBlock - 1) / threadsPerBlock;
+            mergeSortKernel<float><<<gridSize, threadsPerBlock, 0, final_merge_stream>>>(
+                d_data, d_indices, d_indicesTmp, total_rows, width, is_Ascending);
+        }
+        cudaFree(d_data);
+        break;
+    }
+    case DataType::DATETIME:
+    {
+        uint64_t *d_data = nullptr;
+        cudaMalloc(&d_data, total_rows * sizeof(uint64_t));
+        offset = 0;
+        for (size_t batch_idx = 0; batch_idx < batches.size(); ++batch_idx)
+        {
+            uint64_t *batch_data = static_cast<uint64_t *>(batches[batch_idx].data[col_idx]);
+            cudaMemcpyAsync(d_data + offset, batch_data, batches[batch_idx].row_count * sizeof(uint64_t),
+                            cudaMemcpyHostToDevice, streams[batch_idx]);
+            offset += batches[batch_idx].row_count;
+        }
+        for (auto &stream : streams)
+        {
+            cudaStreamSynchronize(stream);
+        }
+        int threadsPerBlock = 256;
+        for (int width = 1; width < total_rows; width *= 2)
+        {
+            int blocks = (total_rows + width * 2 - 1) / (width * 2);
+            int gridSize = (blocks + threadsPerBlock - 1) / threadsPerBlock;
+            mergeSortKernel<uint64_t><<<gridSize, threadsPerBlock, 0, final_merge_stream>>>(
+                d_data, d_indices, d_indicesTmp, total_rows, width, is_Ascending);
+        }
+        cudaFree(d_data);
+        break;
+    }
+    case DataType::STRING:
+    {
+        const char **d_data = nullptr;
+        cudaMalloc(&d_data, total_rows * sizeof(char *));
+        char **d_strings = new char *[total_rows];
+        offset = 0;
+        for (size_t batch_idx = 0; batch_idx < batches.size(); ++batch_idx)
+        {
+            const char **batch_strings = static_cast<const char **>(batches[batch_idx].data[col_idx]);
+            for (size_t row_idx = 0; row_idx < batches[batch_idx].row_count; ++row_idx)
+            {
+                size_t len = strlen(batch_strings[row_idx]) + 1;
+                cudaMalloc(&d_strings[offset], len);
+                cudaMemcpyAsync(d_strings[offset], batch_strings[row_idx], len, cudaMemcpyHostToDevice, streams[batch_idx]);
+                cudaMemcpyAsync(&d_data[offset], &d_strings[offset], sizeof(char *), cudaMemcpyHostToDevice, streams[batch_idx]);
+                offset++;
+            }
+        }
+        for (auto &stream : streams)
+        {
+            cudaStreamSynchronize(stream);
+        }
+        int threadsPerBlock = 256;
+        for (int width = 1; width < total_rows; width *= 2)
+        {
+            int blocks = (total_rows + width * 2 - 1) / (width * 2);
+            int gridSize = (blocks + threadsPerBlock - 1) / threadsPerBlock;
+            mergeSortKernel<char *><<<gridSize, threadsPerBlock, 0, final_merge_stream>>>(
+                const_cast<char **>(d_data), d_indices, d_indicesTmp, total_rows, width, is_Ascending);
+        }
+        for (size_t i = 0; i < total_rows; ++i)
+        {
+            cudaFree(d_strings[i]);
+        }
+        delete[] d_strings;
+        cudaFree(d_data);
+        break;
+    }
+    default:
+        for (auto &stream : streams)
+        {
+            cudaStreamDestroy(stream);
+        }
+        cudaStreamDestroy(final_merge_stream);
+        cudaFree(d_batch_indices);
+        cudaFree(d_indices);
+        cudaFree(d_indicesTmp);
+        throw std::runtime_error("Unsupported data type");
+    }
+
+    // Copy merged batch indices back to host
+    std::vector<BatchIndex> h_merged_batch_indices(total_rows);
+    cudaMemcpyAsync(h_merged_batch_indices.data(), d_batch_indices, total_rows * sizeof(BatchIndex),
+                    cudaMemcpyDeviceToHost, final_merge_stream);
+
+    // Synchronize final stream
+    cudaStreamSynchronize(final_merge_stream);
+
+    // Clean up GPU memory and streams
+    cudaFree(d_batch_indices);
+    cudaFree(d_indices);
+    cudaFree(d_indicesTmp);
+    for (auto &stream : streams)
+    {
+        cudaStreamDestroy(stream);
+    }
+    cudaStreamDestroy(final_merge_stream);
+
+    // Construct output TableResults
+    TableResults result;
+    result.column_count = batches[0].column_count;
+    result.has_more = batches[0].has_more;
+    result.row_count = total_rows;
+    result.columns = batches[0].columns;
+    result.data.resize(result.column_count);
+
+    // Allocate host memory for output
+    for (size_t col = 0; col < result.column_count; ++col)
+    {
+        switch (result.columns[col].type)
+        {
+        case DataType::FLOAT:
+        {
+            float *h_output = static_cast<float *>(malloc(total_rows * sizeof(float)));
+            offset = 0;
+            for (const auto &idx : h_merged_batch_indices)
+            {
+                float *batch_data = static_cast<float *>(batches[idx.batch_idx].data[col]);
+                h_output[offset++] = batch_data[idx.row_idx];
+            }
+            result.data[col] = h_output;
+            break;
+        }
+        case DataType::DATETIME:
+        {
+            uint64_t *h_output = static_cast<uint64_t *>(malloc(total_rows * sizeof(uint64_t)));
+            offset = 0;
+            for (const auto &idx : h_merged_batch_indices)
+            {
+                uint64_t *batch_data = static_cast<uint64_t *>(batches[idx.batch_idx].data[col]);
+                h_output[offset++] = batch_data[idx.row_idx];
+            }
+            result.data[col] = h_output;
+            break;
+        }
+        case DataType::STRING:
+        {
+            const char **h_output = static_cast<const char **>(malloc(total_rows * sizeof(char *)));
+            offset = 0;
+            for (const auto &idx : h_merged_batch_indices)
+            {
+                const char **batch_data = static_cast<const char **>(batches[idx.batch_idx].data[col]);
+                h_output[offset++] = batch_data[idx.row_idx];
+            }
+            result.data[col] = h_output;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    return result;
 }
 
 std::vector<size_t> OrderBy::getSortedIndex(const TableResults &input_table)
@@ -148,7 +383,6 @@ std::vector<size_t> OrderBy::getSortedIndex(const TableResults &input_table)
     std::vector<size_t> sorted_indices(n);
     cudaMemcpy(sorted_indices.data(), d_indices, n * sizeof(size_t), cudaMemcpyDeviceToHost);
 
-    // Clean up
     cudaFree(d_indices);
     cudaFree(d_indicesTmp);
 
@@ -175,7 +409,6 @@ TableResults OrderBy::executeOrderBy(const TableResults &input_table)
 
     for (size_t i = 0; i < input_table.columns.size(); ++i)
     {
-
         switch (input_table.columns[i].type)
         {
         case DataType::FLOAT:
@@ -185,10 +418,7 @@ TableResults OrderBy::executeOrderBy(const TableResults &input_table)
             cudaMalloc(&d_output, result.row_count * sizeof(float));
             cudaMemcpy(d_input, input_table.data[i], input_table.row_count * sizeof(float), cudaMemcpyHostToDevice);
             getRowsKernel<float><<<numBlocks, numThreads>>>(
-                d_input,
-                d_idx,
-                d_output,
-                result.row_count);
+                d_input, d_idx, d_output, result.row_count);
             cudaDeviceSynchronize();
             float *h_output_data = static_cast<float *>(malloc(result.row_count * sizeof(float)));
             cudaMemcpy(h_output_data, d_output, result.row_count * sizeof(float), cudaMemcpyDeviceToHost);
@@ -204,10 +434,7 @@ TableResults OrderBy::executeOrderBy(const TableResults &input_table)
             cudaMalloc(&d_output, result.row_count * sizeof(uint64_t));
             cudaMemcpy(d_input, input_table.data[i], input_table.row_count * sizeof(uint64_t), cudaMemcpyHostToDevice);
             getRowsKernel<uint64_t><<<numBlocks, numThreads>>>(
-                d_input,
-                d_idx,
-                d_output,
-                result.row_count);
+                d_input, d_idx, d_output, result.row_count);
             cudaDeviceSynchronize();
             uint64_t *h_output_data = static_cast<uint64_t *>(malloc(result.row_count * sizeof(uint64_t)));
             cudaMemcpy(h_output_data, d_output, result.row_count * sizeof(uint64_t), cudaMemcpyDeviceToHost);
@@ -228,10 +455,7 @@ TableResults OrderBy::executeOrderBy(const TableResults &input_table)
             const char **d_output_strings;
             cudaMalloc(&d_output_strings, result.row_count * sizeof(char *));
             getRowsKernel<const char *><<<numBlocks, numThreads>>>(
-                d_input_strings,
-                d_idx,
-                d_output_strings,
-                result.row_count);
+                d_input_strings, d_idx, d_output_strings, result.row_count);
 
             cudaDeviceSynchronize();
 

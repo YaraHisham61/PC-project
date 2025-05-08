@@ -382,7 +382,6 @@ TableResults HashJoin::executeJoin(const TableResults &left_table, const TableRe
     {
         TableResults result;
         result.row_count = 0;
-        result.has_more = false;
         return result;
     }
 

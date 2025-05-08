@@ -142,7 +142,7 @@ int main()
     // profiler.stop("CPU Execution MY");
 
     profiler.start("GPU Execution");
-    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 50000, true);
+    PhysicalOpNode::executePlanInBatches(&(physical_plan.get()->Root()), &data_base, 25000, true);
     // printPhysicalPlan(&(physical_plan.get()->Root()));
     profiler.stop("GPU Execution");
 

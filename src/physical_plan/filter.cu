@@ -291,7 +291,7 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
     filtered_table.batch_index = input_table.batch_index;
     filtered_table.data.resize(input_table.column_count);
 
-    const size_t chunk_size =10000 ;
+    const size_t chunk_size = 10000;
     size_t num_chunks = (row_count + chunk_size - 1) / chunk_size;
     std::vector<cudaStream_t> streams(std::max<size_t>(1, num_chunks));
     for (auto &stream : streams)
@@ -544,6 +544,204 @@ TableResults Filter::applyFilter(const TableResults &input_table) const
 
     return filtered_table;
 }
+
+bool *Filter::getSelectedRowsCPU(const TableResults &input_table) const
+{
+    const size_t row_count = input_table.row_count;
+    bool *result_mask = new bool[row_count]();
+
+    // Initialize all values to false
+    std::fill(result_mask, result_mask + row_count, false);
+
+    for (size_t cond_idx = 0; cond_idx < this->conditions.size(); cond_idx++)
+    {
+        const auto &cond = this->conditions[cond_idx];
+        const size_t col_idx = input_table.getColumnIndex(cond.column);
+        const DataType col_type = input_table.columns[col_idx].type;
+
+        // Create temporary mask for this condition
+        bool *temp_mask = new bool[row_count]();
+
+        if (col_type == DataType::FLOAT)
+        {
+            float *col_data = static_cast<float *>(input_table.data[col_idx]);
+            float value = std::stof(cond.value);
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                if (cond.op == ">")
+                    temp_mask[i] = col_data[i] > value;
+                else if (cond.op == "<")
+                    temp_mask[i] = col_data[i] < value;
+                else if (cond.op == "=")
+                    temp_mask[i] = col_data[i] == value;
+                else if (cond.op == "!=")
+                    temp_mask[i] = col_data[i] != value;
+                else if (cond.op == "<=")
+                    temp_mask[i] = col_data[i] <= value;
+                else if (cond.op == ">=")
+                    temp_mask[i] = col_data[i] >= value;
+            }
+        }
+        else if (col_type == DataType::DATETIME)
+        {
+            uint64_t *col_data = static_cast<uint64_t *>(input_table.data[col_idx]);
+            uint64_t value = getDateTime(cond.value);
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                if (cond.op == ">")
+                    temp_mask[i] = col_data[i] > value;
+                else if (cond.op == "<")
+                    temp_mask[i] = col_data[i] < value;
+                else if (cond.op == "=")
+                    temp_mask[i] = col_data[i] == value;
+                else if (cond.op == "!=")
+                    temp_mask[i] = col_data[i] != value;
+                else if (cond.op == "<=")
+                    temp_mask[i] = col_data[i] <= value;
+                else if (cond.op == ">=")
+                    temp_mask[i] = col_data[i] >= value;
+            }
+        }
+        else if (col_type == DataType::STRING)
+        {
+            const char **col_data = static_cast<const char **>(input_table.data[col_idx]);
+            const std::string &value = cond.value;
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                int cmp_result = strcmp(col_data[i], value.c_str());
+                temp_mask[i] = (cmp_result == 0);
+            }
+        }
+
+        if (cond_idx == 0)
+        {
+            std::copy(temp_mask, temp_mask + row_count, result_mask);
+        }
+        else
+        {
+            const std::string &op = logical_ops[cond_idx - 1];
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                if (op == "AND")
+                    result_mask[i] = result_mask[i] && temp_mask[i];
+                else if (op == "OR")
+                    result_mask[i] = result_mask[i] || temp_mask[i];
+            }
+        }
+
+        delete[] temp_mask;
+    }
+
+    return result_mask;
+}
+
+TableResults Filter::applyFilterCPU(const TableResults &input_table) const
+{
+    if (input_table.row_count == 0)
+    {
+        return input_table;
+    }
+
+    bool* selected_rows_ptr = getSelectedRowsCPU(input_table);
+    std::vector<bool> selected_rows(selected_rows_ptr, selected_rows_ptr + input_table.row_count);
+    delete[] selected_rows_ptr;
+
+    // Count selected rows
+    size_t selected_count = 0;
+    const size_t row_count = input_table.row_count;
+    for (size_t i = 0; i < row_count; i++)
+    {
+        if (selected_rows[i])
+            selected_count++;
+    }
+
+    // Create new filtered table
+    TableResults filtered_table;
+    filtered_table.has_more = input_table.has_more;
+    filtered_table.column_count = input_table.column_count;
+    filtered_table.columns = input_table.columns;
+    filtered_table.row_count = selected_count;
+    filtered_table.batch_index = input_table.batch_index;
+    filtered_table.data.resize(input_table.column_count);
+
+    // Precompute output positions for each selected row
+    std::vector<size_t> output_positions(row_count);
+    size_t output_idx = 0;
+    for (size_t i = 0; i < row_count; i++)
+    {
+        if (selected_rows[i])
+        {
+            output_positions[i] = output_idx++;
+        }
+    }
+
+    // Process each column
+    for (size_t col_idx = 0; col_idx < input_table.column_count; col_idx++)
+    {
+        const DataType col_type = input_table.columns[col_idx].type;
+
+        switch (col_type)
+        {
+        case DataType::FLOAT:
+        {
+            float *input_data = static_cast<float *>(input_table.data[col_idx]);
+            float *output_data = static_cast<float *>(malloc(selected_count * sizeof(float)));
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                if (selected_rows[i])
+                {
+                    output_data[output_positions[i]] = input_data[i];
+                }
+            }
+
+            filtered_table.data[col_idx] = output_data;
+            break;
+        }
+        case DataType::DATETIME:
+        {
+            uint64_t *input_data = static_cast<uint64_t *>(input_table.data[col_idx]);
+            uint64_t *output_data = static_cast<uint64_t *>(malloc(selected_count * sizeof(uint64_t)));
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                if (selected_rows[i])
+                {
+                    output_data[output_positions[i]] = input_data[i];
+                }
+            }
+
+            filtered_table.data[col_idx] = output_data;
+            break;
+        }
+        case DataType::STRING:
+        {
+            const char **input_strings = static_cast<const char **>(input_table.data[col_idx]);
+            const char **output_strings = static_cast<const char **>(malloc(selected_count * sizeof(char *)));
+
+            for (size_t i = 0; i < row_count; i++)
+            {
+                if (selected_rows[i])
+                {
+                    output_strings[output_positions[i]] = input_strings[i];
+                }
+            }
+
+            filtered_table.data[col_idx] = output_strings;
+            break;
+        }
+        default:
+            throw std::runtime_error("Unsupported data type: " + std::to_string(static_cast<int>(col_type)));
+        }
+    }
+
+    return filtered_table;
+}
+
 void Filter::print() const
 {
     std::cout << "FILTER (";

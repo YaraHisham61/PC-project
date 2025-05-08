@@ -15,13 +15,13 @@ __device__ bool isNullValue(T value)
 template <>
 __device__ bool isNullValue<float>(float value)
 {
-    return isnan(value);
+    return ::isnan(value);
 }
 
 template <>
 __device__ bool isNullValue<uint64_t>(uint64_t value)
 {
-    return value == 0;
+    return isnan(__longlong_as_double(value));
 }
 
 template <>

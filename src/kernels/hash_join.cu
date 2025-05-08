@@ -12,16 +12,6 @@ __device__ int device_strcmp22(const char *s1, const char *s2)
     return *(const unsigned char *)s1 - *(const unsigned char *)s2;
 }
 
-//-----------------------------------------------------------------------------
-// Generic version for POD types (int, float, uint64_t, ...)
-//  Inputs:
-//    left_data, right_data   -- the two columns to join
-//    left_size, right_size   -- their lengths
-//  Outputs:
-//    out_left_idx, out_right_idx -- pre-allocated arrays of length at least
-//                                   left_size * right_size (worst-case)
-//    out_count               -- a single-element device counter (initially 0)
-//-----------------------------------------------------------------------------
 template <typename T>
 __global__ void hashJoinKernel(
     const T *__restrict__ left_data,
@@ -35,27 +25,22 @@ __global__ void hashJoinKernel(
     extern __shared__ __align__(sizeof(T)) unsigned char shared_mem[];
     T *shared_right = reinterpret_cast<T *>(shared_mem);
 
-    // Slide a window of size blockDim.x over 'right_data'
     for (size_t block_start = 0; block_start < right_size; block_start += blockDim.x)
     {
         size_t right_idx = block_start + threadIdx.x;
-        // Load one element of right_data into shared memory
         if (right_idx < right_size)
             shared_right[threadIdx.x] = right_data[right_idx];
         __syncthreads();
 
-        // Each thread takes one index from left_data
         size_t left_idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (left_idx < left_size)
         {
             T left_val = left_data[left_idx];
-            // Only search up to the valid window
             size_t limit = min(static_cast<size_t>(blockDim.x), right_size - block_start);
             for (size_t i = 0; i < limit; ++i)
             {
                 if (left_val == shared_right[i])
                 {
-                    // Record a match pair (left_idx, right_idx = block_start+i)
                     unsigned long long pos = atomicAdd(out_count, 1ULL);
                     out_left_idx[pos] = left_idx;
                     out_right_idx[pos] = block_start + i;
@@ -134,7 +119,6 @@ __global__ void getRowsKernel<const char *>(
     }
 }
 
-// Explicit instantiations
 template __global__ void hashJoinKernel<float>(
     const float *, const float *,
     size_t, size_t,

@@ -29,5 +29,9 @@ public:
     void parseSimpleCondition(const std::string &expr);
     void parseComplexCondition(const std::string &expr);
     Condition parseSingleCondition(const std::string &cond_expr) const;
+
+    bool *getSelectedRowsCPU(const TableResults &input_table) const;
+
+    TableResults applyFilterCPU(const TableResults &input_table) const;
     void removeTimestampSuffixSimple();
 };

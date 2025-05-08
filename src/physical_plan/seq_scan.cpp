@@ -223,7 +223,8 @@ TableResults SeqScan::read_scan_table(DB *data_base, size_t batch_index, size_t 
                 }
                 catch (...)
                 {
-                    data_ptr[row_idx] = std::numeric_limits<uint64_t>::quiet_NaN();
+                    const double nan_value = std::numeric_limits<double>::quiet_NaN();
+                    data_ptr[row_idx] = *reinterpret_cast<const uint64_t *>(&nan_value);
                 }
             }
             result.data[col_idx] = data_ptr;

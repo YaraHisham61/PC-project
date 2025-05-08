@@ -95,7 +95,7 @@ __global__ void findMaxElement(T *input, T *output, int size)
 
     else if constexpr (std::is_same<T, uint64_t>::value)
     {
-        local_max = 0; // Minimum for unsigned is 0
+        local_max = 0; 
     }
 
     if (tid < size)

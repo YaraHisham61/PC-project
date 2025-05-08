@@ -6,7 +6,6 @@ __device__ bool operators(const T &a, const T &b, bool ascending)
     return ascending ? (a < b) : (a > b);
 }
 
-// Specialization for C-strings
 template <>
 __device__ bool operators<char *>(char *const &a, char *const &b, bool ascending)
 {
@@ -31,16 +30,14 @@ __device__ bool operators<char *>(char *const &a, char *const &b, bool ascending
     return ascending ? (cmp < 0) : (cmp > 0);
 }
 
-// Device functions for merge sort - generic version for numeric types
 template <typename T>
 __device__ void merge(T *keys, size_t *indices, size_t *indicesTmp,
                       int left, int mid, int right, bool ascending)
 {
-    int i = left;    // Starting index of left subarray
-    int j = mid + 1; // Starting index of right subarray
-    int k = left;    // Starting index of merged array
+    int i = left;   
+    int j = mid + 1; 
+    int k = left;   
 
-    // Merge the two arrays based on comparing values at indices
     while (i <= mid && j <= right)
     {
         if (operators<T>(keys[indices[i]], keys[indices[j]], ascending))
@@ -56,7 +53,6 @@ __device__ void merge(T *keys, size_t *indices, size_t *indicesTmp,
         k++;
     }
 
-    // Copy remaining elements
     while (i <= mid)
     {
         indicesTmp[k] = indices[i];
@@ -71,23 +67,20 @@ __device__ void merge(T *keys, size_t *indices, size_t *indicesTmp,
         k++;
     }
 
-    // Copy back the merged indices
     for (i = left; i <= right; i++)
     {
         indices[i] = indicesTmp[i];
     }
 }
 
-// Specialization for string merging
 template <>
 __device__ void merge<char *>(char **keys, size_t *indices, size_t *indicesTmp,
                               int left, int mid, int right, bool ascending)
 {
-    int i = left;    // Starting index of left subarray
-    int j = mid + 1; // Starting index of right subarray
-    int k = left;    // Starting index of merged array
+    int i = left;    
+    int j = mid + 1; 
+    int k = left;    
 
-    // Merge the two arrays - string version
     while (i <= mid && j <= right)
     {
         if (operators<char *>(keys[indices[i]], keys[indices[j]], ascending))
@@ -103,7 +96,6 @@ __device__ void merge<char *>(char **keys, size_t *indices, size_t *indicesTmp,
         k++;
     }
 
-    // Copy remaining elements
     while (i <= mid)
     {
         indicesTmp[k] = indices[i];
@@ -118,14 +110,12 @@ __device__ void merge<char *>(char **keys, size_t *indices, size_t *indicesTmp,
         k++;
     }
 
-    // Copy back the merged indices
     for (i = left; i <= right; i++)
     {
         indices[i] = indicesTmp[i];
     }
 }
 
-// Kernel for the bottom-up merge sort - generic version
 template <typename T>
 __global__ void mergeSortKernel(T *keys, size_t *indices, size_t *indicesTmp,
                                 int n, int width, bool ascending)

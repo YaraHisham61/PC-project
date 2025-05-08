@@ -5,18 +5,20 @@
 #include "physical_plan/join.hpp"
 #include "physical_plan/aggregate.hpp"
 #include "physical_plan/order_by.hpp"
+#include "dbms/profiler.hpp"
 
 std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     duckdb::PhysicalOperator *op,
     DB *data_base,
     TableResults **input_table_ptr,
-    size_t batch_index, size_t batch_size, size_t batch_index_right, bool *is_join, bool *end_right)
+    size_t batch_index, size_t batch_size, size_t batch_index_right, bool *is_join, bool *end_right, bool GPU)
 {
     if (!op)
     {
         return nullptr;
     }
 
+    Profiler profiler;
     std::unique_ptr<PhysicalOpNode> node;
     std::string op_name = op->GetName();
     auto params = op->ParamsToString();
@@ -56,7 +58,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         auto *join_ptr = static_cast<HashJoin *>(node.get());
         *is_join = true;
         TableResults *left_table_ptr = nullptr;
-        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right);
+        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU);
         if (left_table_ptr->row_count == 0)
         {
             return node;
@@ -66,7 +68,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
             node->children.push_back(std::move(left_child));
 
         TableResults *right_table_ptr = nullptr;
-        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index_right, batch_size, batch_index_right, is_join, end_right);
+        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index_right, batch_size, batch_index_right, is_join, end_right, GPU);
 
         if (right_child)
             node->children.push_back(std::move(right_child));
@@ -107,7 +109,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     }
     for (auto &child : op->children)
     {
-        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right);
+        auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU);
         if (child_node && !child_node->params.empty())
         {
             node->children.push_back(std::move(child_node));
@@ -139,9 +141,20 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         }
 
         auto *filter_ptr = static_cast<Filter *>(node.get());
-        TableResults filtered_result = filter_ptr->applyFilter(**input_table_ptr);
-        // filtered_result.print();
-        **input_table_ptr = std::move(filtered_result);
+        if (GPU)
+        {
+            profiler.start("GPU Filter");
+            TableResults filtered_result = filter_ptr->applyFilter(**input_table_ptr);
+            **input_table_ptr = std::move(filtered_result);
+            profiler.stop("GPU Filter");
+        }
+        else
+        {
+            profiler.start("CPU Filter");
+            TableResults filtered_result = filter_ptr->applyFilterCPU(**input_table_ptr);
+            **input_table_ptr = std::move(filtered_result);
+            profiler.stop("CPU Filter");
+        }
     }
     else if (op_name == "PROJECTION")
     {
@@ -193,7 +206,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 }
 
 void PhysicalOpNode::executePlanInBatches(
-    duckdb::PhysicalOperator *op, DB *data_base, size_t batch_size = 1000)
+    duckdb::PhysicalOperator *op, DB *data_base, size_t batch_size = 1000, bool GPU = true)
 {
     TableResults *current_batch = nullptr;
     size_t batch_index = 0;
@@ -220,7 +233,7 @@ void PhysicalOpNode::executePlanInBatches(
     {
         current_batch = nullptr;
 
-        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right);
+        auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU);
 
         if (!current_batch)
         {

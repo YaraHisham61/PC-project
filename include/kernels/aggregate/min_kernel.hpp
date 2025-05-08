@@ -2,8 +2,8 @@
 #include <cuda_runtime.h>
 #include <float.h>
 #include <cstdint>
-#include <climits> // For INT_MIN, FLT_MAX
-#include <cstdio>  // Required for printf
+#include <climits> 
+#include <cstdio>  
 #include <cfloat>
 template <typename T>
 __device__ T atomicMinGeneric(T *address, T val);

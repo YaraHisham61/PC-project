@@ -55,7 +55,7 @@ __device__ char *atomicMinString(char **address, char *new_ptr, const char **str
         assumed = old;
         if (old != nullptr && new_ptr != nullptr && cuda_strcmp_min(old, new_ptr) <= 0)
         {
-            break; // old string is lexicographically <= new string
+            break; 
         }
         old = reinterpret_cast<char *>(atomicCAS(
             reinterpret_cast<unsigned long long *>(address),

@@ -2,8 +2,7 @@
 #include <cuda_runtime.h>
 #include <float.h>
 #include <cstdint>
-#include <climits> // For INT_MIN, FLT_MAX
-// #include <cstdio>  // Required for printf
+#include <climits>
 
 template <typename T>
 __device__ T atomicMaxGeneric(T *address, T val);

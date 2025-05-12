@@ -1,0 +1,5 @@
+SELECT o.Order_id, p.ProductName, o.TotalAmount, p.Price
+FROM Orders o, Product p
+WHERE p.Product_id = o.Product_id 
+AND p.Price > (SELECT MIN(TotalAmount) FROM Orders)
+ORDER BY p.Price Desc

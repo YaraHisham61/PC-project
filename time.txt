@@ -1,0 +1,10 @@
+query1.txt: 1738 ms
+query10.txt: 1738 ms
+query2.txt: 1717 ms
+query3.txt: 1666 ms
+query4.txt: 1810 ms
+query5.txt: 1082 ms
+query6.txt: 1732 ms
+query7.txt: 1851 ms
+query8.txt: 1054 ms
+query9.txt: 1709 ms

@@ -1,0 +1,5 @@
+SELECT e.Employee_id, e.Name, e.Salary
+FROM Employee e, Orders o
+WHERE e.Employee_id = o.Employee_id
+  AND o.TotalAmount > 77950
+ORDER BY e.Salary DESC

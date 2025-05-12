@@ -5,6 +5,7 @@
 #include "physical_plan/join.hpp"
 #include "physical_plan/aggregate.hpp"
 #include "physical_plan/order_by.hpp"
+#include "physical_plan/nested_join.hpp"
 #include "dbms/profiler.hpp"
 #include <future>
 #include <vector>
@@ -35,6 +36,10 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     {
         node = std::make_unique<Filter>(params);
     }
+    else if (op_name == "NESTED_LOOP_JOIN")
+    {
+        node = std::make_unique<NestedLoopJoin>(params);
+    }
     else if (op_name == "PROJECTION")
     {
         node = std::make_unique<Projection>(params);
@@ -54,7 +59,44 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
     {
         node = std::make_unique<OrderBy>(params);
     }
+    if (op_name == "NESTED_LOOP_JOIN")
+    {
+        auto *nested_ptr = static_cast<NestedLoopJoin *>(node.get());
+        TableResults *left_table_ptr = nullptr;
+        auto left_child = buildPlanTree(&(op->children[0].get()), data_base, &left_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU, data_dir);
+        if (left_table_ptr->row_count == 0)
+        {
+            return node;
+        }
 
+        if (left_child)
+            node->children.push_back(std::move(left_child));
+
+        TableResults *right_table_ptr = nullptr;
+        auto right_child = buildPlanTree(&(op->children[1].get()), data_base, &right_table_ptr, batch_index_right, batch_size, batch_index_right, is_join, end_right, GPU, data_dir);
+
+        if (right_child)
+            node->children.push_back(std::move(right_child));
+        if (!left_table_ptr || !right_table_ptr)
+        {
+            std::cerr << "Error: Missing input tables for join\n";
+            return nullptr;
+        }
+        TableResults nested_result;
+
+        nested_result = nested_ptr->applyNested(*left_table_ptr, *right_table_ptr);
+
+        if (*input_table_ptr)
+        {
+            **input_table_ptr = std::move(nested_result);
+        }
+        else
+        {
+            *input_table_ptr = new TableResults(std::move(nested_result));
+        }
+
+        return node;
+    }
     if (op_name == "HASH_JOIN")
     {
         auto *join_ptr = static_cast<HashJoin *>(node.get());
@@ -107,6 +149,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         }
         return node;
     }
+
     for (auto &child : op->children)
     {
         auto child_node = buildPlanTree(&(child.get()), data_base, input_table_ptr, batch_index, batch_size, batch_index_right, is_join, end_right, GPU, data_dir);
@@ -166,8 +209,10 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         TableResults projected_result = proj_ptr->applyProjection(**input_table_ptr);
         **input_table_ptr = std::move(projected_result);
     }
+
     else if (op_name == "UNGROUPED_AGGREGATE")
     {
+
         if (!*input_table_ptr)
         {
             std::cerr << "Error: No input table to project\n";
@@ -175,6 +220,10 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
         }
 
         auto *aggr_ptr = static_cast<Aggregate *>(node.get());
+        if (aggr_ptr->flag == true)
+        {
+            return node;
+        }
         TableResults aggregate_result = aggr_ptr->computeAggregates(**input_table_ptr);
         // aggregate_result.print();
         **input_table_ptr = std::move(aggregate_result);
@@ -199,6 +248,7 @@ std::unique_ptr<PhysicalOpNode> PhysicalOpNode::buildPlanTree(
 void PhysicalOpNode::executePlanInBatches(
     duckdb::PhysicalOperator *op, DB *data_base, std::string query_file_name, std::string data_dir, size_t batch_size, bool GPU)
 {
+    Profiler prof;
     TableResults *current_batch = nullptr;
     size_t batch_index = 0;
     size_t batch_index_right = 0;
@@ -224,12 +274,12 @@ void PhysicalOpNode::executePlanInBatches(
     {
         order_by_op = std::make_unique<OrderBy>(op->ParamsToString());
     }
-    Profiler profiler;
     bool is_join = false;
     bool end_right = false;
+    prof.start("GPU Execution");
+
     while (true)
     {
-
         current_batch = nullptr;
         auto plan_tree = buildPlanTree(op, data_base, &current_batch, batch_index, batch_size, batch_index_right, &is_join, &end_right, GPU, data_dir);
         if (!current_batch)
@@ -309,6 +359,7 @@ void PhysicalOpNode::executePlanInBatches(
         }
         current_batch->batch_index = batch_index;
     }
+    prof.stop("GPU Execution");
 
     if (is_aggregate)
     {

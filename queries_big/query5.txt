@@ -1,0 +1,7 @@
+SELECT e.Name 
+FROM Employee e, Orders o, Product p 
+WHERE e.Employee_id = o.Employee_id 
+  AND o.Product_id = p.Product_id 
+  AND p.Price > 5000 
+  AND e.JoinedDate > '2020-05-11 00:00:00' AND o.TotalAmount > (SELECT AVG(TotalAmount) FROM Orders)
+ORDER BY e.Employee_id Asc

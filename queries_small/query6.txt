@@ -1,0 +1,6 @@
+SELECT p.ProductName, o.OrderDate, e.Name, o.TotalAmount
+FROM Orders o, Product p, Employee e
+WHERE o.Product_id = p.Product_id
+  AND o.Employee_id = e.Employee_id
+  AND o.TotalAmount > 1000 AND p.Price < 500
+ORDER BY o.TotalAmount Asc

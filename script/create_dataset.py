@@ -18,8 +18,8 @@ import pandas as pd
 # num_tables =  3
 
 # normal Config
-min_num_records = 1_000_000
-max_num_record =  1_000_001
+min_num_records = 2_000_000
+max_num_record =  2_000_001
 min_columns = 3
 max_columns = 5
 min_pk_columns = 1
@@ -27,7 +27,7 @@ max_pk_columns = 1
 folder_path = 'data'
 num_tables=  1
 
-max_fk_columns = 2
+max_fk_columns = 1
 seed = 42
 # Initialize Faker instance
 fake = Faker()

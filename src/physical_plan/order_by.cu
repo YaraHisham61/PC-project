@@ -18,6 +18,10 @@ OrderBy::OrderBy(const duckdb::InsertionOrderPreservingMap<std::string> &params)
         {
             table_name = text.substr(0, pos);
             col_name = text.substr(pos + 1, pos2 - pos - 1);
+            if (!col_name.empty() && col_name.front() == '"' && col_name.back() == '"')
+            {
+                col_name = col_name.substr(1, col_name.length() - 2);
+            }
             std::string order = text.substr(pos2 + 1);
             if (order == "DESC")
             {

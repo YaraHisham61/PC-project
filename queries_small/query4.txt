@@ -1,0 +1,6 @@
+SELECT e.Name, e.Salary
+FROM Employee e, Orders o
+WHERE e.Employee_id = o.Employee_id 
+  AND o.TotalAmount > (SELECT AVG(TotalAmount) FROM Orders)
+ORDER BY e.Name Asc
+

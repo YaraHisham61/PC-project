@@ -9,6 +9,7 @@ Filter::Filter(const duckdb::InsertionOrderPreservingMap<std::string> &params)
         parseConditions(it->second);
         removeTimestampSuffixSimple();
     }
+    
 }
 void Filter::removeTimestampSuffixSimple()
 {

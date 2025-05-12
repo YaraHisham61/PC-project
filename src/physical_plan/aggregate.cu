@@ -26,7 +26,7 @@ void Aggregate::parseAggregateList(const std::string &aggregate_list)
     }
 }
 
-AggregateFunction Aggregate::parseSingleAggregate(const std::string &agg_str) const
+AggregateFunction Aggregate::parseSingleAggregate(const std::string &agg_str)
 {
     std::istringstream iss(agg_str);
     std::string func_name;
@@ -66,7 +66,8 @@ AggregateFunction Aggregate::parseSingleAggregate(const std::string &agg_str) co
     }
     else
     {
-        throw std::runtime_error("Unknown aggregate function: " + agg_str);
+        this->flag = true;
+        // throw std::runtime_error("Unknown aggregate function: " + agg_str);
     }
 
     return func;

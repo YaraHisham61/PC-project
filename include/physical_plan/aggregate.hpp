@@ -29,6 +29,7 @@ struct AggregateFunction
 class Aggregate : public PhysicalOpNode
 {
 public:
+    bool flag;
     std::vector<AggregateFunction> aggregates;
     std::vector<std::string> output_names;
     TableResults *intermidiate_results = nullptr;
@@ -48,5 +49,5 @@ public:
     // ValueVariant findMax(const TableResults &input, int col_idx) const;
     void parseAggregateList(const std::string &aggregate_list);
     // bool isNull(const ValueVariant &val) const;
-    AggregateFunction parseSingleAggregate(const std::string &agg_str) const;
+    AggregateFunction parseSingleAggregate(const std::string &agg_str);
 };

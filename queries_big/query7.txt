@@ -1,0 +1,4 @@
+SELECT o.Order_id, o.CustomerName, o.TotalAmount
+FROM Orders o
+WHERE o.OrderDate > '2023-10-23 00:00:00' AND o.Product_id < 1000 OR o.TotalAmount < 30000
+ORDER BY o.TotalAmount Desc;

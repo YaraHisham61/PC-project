@@ -10,6 +10,43 @@
 #include <iostream>
 #include <string>
 
+void printPhysicalPlan(duckdb::PhysicalOperator *op, int indent)
+{
+    if (!op)
+        return;
+
+    std::string pad(indent, ' ');
+    std::cout << pad << "- " << op->GetName() << "\n";
+    auto m = op->ParamsToString();
+
+    // if (op->type == duckdb::PhysicalOperatorType::TABLE_SCAN){
+    //     auto &table_scan = op->Cast<duckdb::PhysicalTableScan>();
+    // }
+    // else if (op->type == duckdb::PhysicalOperatorType::PROJECTION)
+    // {
+    //     auto &projection = op->Cast<duckdb::PhysicalProjection>();
+    //     std::cout << pad << "  Projection: ";
+    //     for (auto &expr : projection.expressions)
+    //     {
+    //         std::cout << expr->ToString() << ", ";
+    //     }
+    //     std::cout << "\n";
+    // }
+
+    if (m.size() > 0)
+    {
+        std::cout << pad << "  Params: ";
+        for (auto &pair : m)
+        {
+            std::cout << pair.first << ": " << pair.second << ", ";
+        }
+        std::cout << "\n";
+    }
+    for (auto &child : op->children)
+    {
+        printPhysicalPlan(&(child.get()), indent + 2);
+    }
+}
 std::string readQueryFromFile(const std::string &filename)
 {
     std::ifstream inputFile(filename);
@@ -36,6 +73,9 @@ std::string readQueryFromFile(const std::string &filename)
 void setupDatabase(duckdb::Connection &con)
 {
     con.Query("SET disabled_optimizers = 'filter_pushdown, statistics_propagation';");
+    con.Query("SET scalar_subquery_error_on_multiple_rows=false;");
+    con.Query("SET disabled_optimizers = 'late_materialization,compressed_materialization,unused_columns,column_lifetime,statistics_propagation,filter_pushdown,common_aggregate';");
+
     con.Query("SET threads TO 1;");
 }
 
@@ -83,14 +123,14 @@ void executeQueryGPU(duckdb::PhysicalOperator *physical_plan, DB &data_base, Pro
 
 int main(int argc, char *argv[])
 {
-    if (argc != 3)
-    {
-        std::cerr << "Usage: " << argv[0] << " <data_folder_path> <query_file>" << std::endl;
-        return 1;
-    }
+    // if (argc != 3)
+    // {
+    //     std::cerr << "Usage: " << argv[0] << " <data_folder_path> <query_file>" << std::endl;
+    //     return 1;
+    // }
 
-    std::string data_folder_path = argv[1];
-    std::string query_file = argv[2];
+    std::string data_folder_path ="data_small/";
+    std::string query_file = "queries_small/query3.txt";
     try
     {
         Profiler profiler;
@@ -122,9 +162,10 @@ int main(int argc, char *argv[])
         duckdb::PhysicalPlanGenerator physical_plan_generator(*con.context);
         auto physical_plan = physical_plan_generator.Plan(logical_plan->Copy(*con.context));
         profiler.stop("Get Physical Plan");
+        // std::cout << physical_plan.get()->Root().ToString() << std::endl;
 
-        executeQueryCPU(&(physical_plan.get()->Root()), con, data_base, profiler, query, data_folder_path);
-
+        // executeQueryCPU(&(physical_plan.get()->Root()), con, data_base, profiler, query, data_folder_path);
+        // printPhysicalPlan(&(physical_plan.get()->Root()), 0);
         executeQueryGPU(&(physical_plan.get()->Root()), data_base, profiler, query_file, data_folder_path);
 
         profiler.stop("Total");

@@ -1,0 +1,5 @@
+SELECT o.Order_id, o.CustomerName, o.TotalAmount, o.OrderDate
+FROM Orders o
+WHERE o.TotalAmount > 100 AND o.OrderDate > '2010-01-01 00:00:00' AND o.OrderDate < '2025-01-01 00:00:00'
+  AND o.TotalAmount < 10000
+ORDER BY o.OrderDate ASC;

@@ -1,0 +1,7 @@
+SELECT 
+    MIN(o.TotalAmount) AS MinOrderAmount, 
+    MAX(o.TotalAmount) AS MaxOrderAmount, 
+    COUNT(o.Order_id) AS TotalOrderCount
+FROM Orders o, Employee e
+WHERE o.Employee_id = e.Employee_id
+  AND e.Salary > 5000;

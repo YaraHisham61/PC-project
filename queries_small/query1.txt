@@ -1,0 +1,4 @@
+SELECT o.CustomerName
+FROM Orders o, Product p
+WHERE o.Product_id = p.Product_id
+  AND p.Price > 700;

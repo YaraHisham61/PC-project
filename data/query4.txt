@@ -1,0 +1,1 @@
+SELECT s1.id FROM Student s1,  Student s2  WHERE s1.id = s2.id
